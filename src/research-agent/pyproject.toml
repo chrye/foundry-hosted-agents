@@ -1,0 +1,10 @@
+[project]
+name = "research-agent"
+version = "0.1.0"
+description = "Research specialist hosted agent, reachable over Responses and A2A."
+requires-python = ">=3.13"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting>=1.0.0b260813",
+    "debugpy",
+]

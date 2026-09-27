@@ -1,0 +1,7 @@
+infra/outputs.env
+.azure/
+.env
+__pycache__/
+.venv/
+
+*Requirements.*

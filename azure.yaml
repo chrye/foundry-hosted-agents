@@ -1,0 +1,196 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+    azd: '>=1.27.1'
+    extensions:
+        azure.ai.agents: '>=1.0.0-beta.9'
+name: foundry-hosted-agents-a2a-poc
+services:
+    # ----------------------------------------------------------------------------------
+    # Supervisor: fans work out to the specialists over A2A and composes their answers.
+    # ----------------------------------------------------------------------------------
+    supervisor-agent:
+        project: src/supervisor-agent
+        host: azure.ai.agent
+        language: python
+        uses:
+            - ai-project
+        kind: hosted
+        name: supervisor-agent
+        description: Routes requests to Foundry research and analysis specialists over A2A and composes their answers.
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+            - name: RESEARCH_AGENT_NAME
+              value: research-agent
+            - name: ANALYSIS_AGENT_NAME
+              value: analysis-agent
+            - name: RESEARCH_A2A_AGENT_NAME
+              value: research-agent-a2a
+            - name: ANALYSIS_A2A_AGENT_NAME
+              value: analysis-agent-a2a
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "1"
+                memory: 2Gi
+        metadata:
+            tags:
+                - Agent Framework
+                - A2A
+                - Supervisor
+                - Responses Protocol
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+            - protocol: a2a
+              version: 1.0.0
+        agentEndpoint:
+            protocols:
+                - responses
+                - a2a
+        agentCard:
+            description: Routes requests to Foundry research and analysis specialists over A2A and composes their answers.
+            version: "1.0"
+            skills:
+                - id: orchestrate-research-and-analysis
+                  name: Research and analysis orchestration
+                  description: Decompose a request, delegate the parts to the research and analysis specialists, and merge their answers into one attributed response.
+                  tags:
+                      - orchestration
+                      - a2a
+                  examples:
+                      - Research the EMEA cloud market and analyse the attached sales spreadsheet against it.
+                - id: a2a-part-probe
+                  name: A2A part-support probe
+                  description: Send the same text, data and file payload over both A2A and the Responses protocol and report which part kinds each transport accepted.
+                  tags:
+                      - diagnostics
+                      - a2a
+
+    # ----------------------------------------------------------------------------------
+    # Research specialist.
+    # ----------------------------------------------------------------------------------
+    research-agent:
+        project: src/research-agent
+        host: azure.ai.agent
+        language: python
+        uses:
+            - ai-project
+        kind: hosted
+        name: research-agent
+        description: Produces sourced research briefs from a topic, structured data or an attached document.
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        metadata:
+            tags:
+                - Agent Framework
+                - A2A
+                - Research
+                - Responses Protocol
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+            - protocol: a2a
+              version: 1.0.0
+        agentEndpoint:
+            protocols:
+                - responses
+                - a2a
+        agentCard:
+            description: Produces sourced research briefs from a topic, structured data or an attached document.
+            version: "1.0"
+            skills:
+                - id: research-brief
+                  name: Research brief
+                  description: Summarise a topic into a summary, key facts, assumptions and open questions.
+                  tags:
+                      - research
+                      - summarisation
+                  examples:
+                      - Brief me on the EMEA public cloud market in 2026.
+                - id: document-review
+                  name: Document review
+                  description: Read an attached file or structured data payload and extract the facts relevant to a question.
+                  tags:
+                      - file
+                      - data
+
+    # ----------------------------------------------------------------------------------
+    # Data-analysis specialist. Grows into the Phase 2 large-file / long-running executor.
+    # ----------------------------------------------------------------------------------
+    analysis-agent:
+        project: src/analysis-agent
+        host: azure.ai.agent
+        language: python
+        uses:
+            - ai-project
+        kind: hosted
+        name: analysis-agent
+        description: Turns datasets into metrics, trends and quantified insights.
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        metadata:
+            tags:
+                - Agent Framework
+                - A2A
+                - Data Analysis
+                - Responses Protocol
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+            - protocol: a2a
+              version: 1.0.0
+        agentEndpoint:
+            protocols:
+                - responses
+                - a2a
+        agentCard:
+            description: Turns datasets into metrics, trends and quantified insights.
+            version: "1.0"
+            skills:
+                - id: dataset-analysis
+                  name: Dataset analysis
+                  description: Compute metrics, trends and comparisons from a supplied dataset and explain the calculations.
+                  tags:
+                      - analysis
+                      - metrics
+                  examples:
+                      - Analyse the attached regional sales CSV against the quarterly targets.
+                - id: quantitative-review
+                  name: Quantitative review
+                  description: Sanity-check the numbers in a research brief and quantify its findings.
+                  tags:
+                      - validation
+
+    # ----------------------------------------------------------------------------------
+    # Existing Foundry project. Infrastructure is owned by infra/main.bicep, so no model
+    # deployments are declared here - azd reuses the project via USE_EXISTING_AI_PROJECT.
+    # ----------------------------------------------------------------------------------
+    ai-project:
+        host: azure.ai.project
+        deployments: []
+        endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
+infra:
+    provider: microsoft.foundry

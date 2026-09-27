@@ -1,0 +1,11 @@
+[project]
+name = "supervisor-agent"
+version = "0.1.0"
+description = "Supervisor hosted agent that orchestrates Foundry specialists over A2A."
+requires-python = ">=3.13"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting>=1.0.0b260813",
+    "httpx",
+    "debugpy",
+]
