@@ -41,6 +41,7 @@ from turn_state import (
     set_attachments,
     with_hop_log_evidence,
 )
+from xlsx_attachments import EXCEL_ANALYSIS_MARKER, XLSX_MEDIA_TYPE, workbook_model_messages
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -74,10 +75,19 @@ async def _clients() -> tuple[FoundryA2AClient, FoundryResponsesClient]:
 # --------------------------------------------------------------------------------------
 
 
+def _is_workbook(part: dict[str, Any]) -> bool:
+    return (str(part.get("filename", "")).lower().endswith(".xlsx")
+            or str(part.get("file_data", "")).startswith(f"data:{XLSX_MEDIA_TYPE};"))
+
+
 async def _delegate_responses(peer: str, question: str) -> str:
     """Call a hosted specialist over the Responses protocol, forwarding attachments."""
     _, responses = await _clients()
-    content = [text_content(question), *get_responses_attachments()]
+    attachments = get_responses_attachments()
+    # Only analysis has Excel tools; other peers still get the text and non-Excel attachments.
+    withheld = [] if peer == ANALYSIS_AGENT else [part for part in attachments if _is_workbook(part)]
+    content = [text_content(question), *(part for part in attachments if part not in withheld)]
+    has_workbook = peer == ANALYSIS_AGENT and any(_is_workbook(part) for part in attachments)
 
     hop: dict[str, Any] = {
         "peer": peer,
@@ -85,6 +95,8 @@ async def _delegate_responses(peer: str, question: str) -> str:
         "url": responses.endpoint_url(peer),
         "sent_content_types": [c["type"] for c in content],
     }
+    if withheld:
+        hop["withheld_attachments"] = [part.get("filename") or "workbook.xlsx" for part in withheld]
     try:
         reply = await responses.send(peer, content)
     except ResponsesError as exc:
@@ -99,8 +111,20 @@ async def _delegate_responses(peer: str, question: str) -> str:
     hop["received_content_types"] = reply.content_types
     hop["reply_chars"] = len(reply.text)
     hop["received_parts"] = _received_parts(reply.text)
+    if has_workbook:
+        excel = _received_excel_analysis(reply.text)
+        if excel is None:
+            logger.warning("Analysis response is missing %s evidence", EXCEL_ANALYSIS_MARKER)
+        else:
+            hop["excel_analysis"] = excel
     record_hop(hop)
-    return reply.text or "(the specialist returned no text)"
+    answer = reply.text or "(the specialist returned no text)"
+    if withheld:
+        answer += (
+            f"\n\n_Note: not sent to '{peer}': {', '.join(hop['withheld_attachments'])}. "
+            "Only the analysis specialist has Excel tools; use ask_analysis for workbook data._"
+        )
+    return answer
 
 
 def _received_parts(text: str) -> list[dict[str, Any]]:
@@ -115,6 +139,17 @@ def _received_parts(text: str) -> list[dict[str, Any]]:
                 return parts
     logger.warning("Specialist response has no valid %s evidence", INVENTORY_MARKER)
     return []
+
+
+def _received_excel_analysis(text: str) -> dict[str, Any] | None:
+    for block in reversed(re.findall(r"```json\s*(.*?)```", text, re.DOTALL)):
+        try:
+            payload = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("marker") == EXCEL_ANALYSIS_MARKER:
+            return payload
+    return None
 
 
 async def _delegate_a2a(peer: str, question: str, extra_parts: list[dict[str, Any]] | None = None) -> str:
@@ -174,7 +209,8 @@ async def ask_analysis(
     """Delegate to the data-analysis specialist for metrics, trends and insights.
 
     Uses the Responses transport, so any data or files the caller attached this turn are
-    forwarded automatically. Never paste attachment contents into the question.
+    forwarded automatically, including .xlsx workbooks for its Excel-analysis tools.
+    Never paste attachment contents into the question.
     """
     return await _delegate_responses(ANALYSIS_AGENT, question)
 
@@ -328,6 +364,11 @@ class SupervisorTurnMiddleware(AgentMiddleware):
             capture_responses_attachments(context.messages),
         )
         reset_hop_log()
+        context.messages = workbook_model_messages(
+            context.messages,
+            "Use ask_analysis to inspect sheets and compute from this turn's workbook. "
+            "Do not send the workbook to research or A2A. Reattach it on later turns.",
+        )
 
         summary = attachment_summary()
         if summary:
@@ -358,7 +399,8 @@ INSTRUCTIONS = f"""You are the Supervisor of a multi-agent system running on Mic
 You never answer research or analysis questions yourself. You route them:
 - `ask_research` -> the research specialist ('{RESEARCH_AGENT}').
 - `ask_analysis` -> the data-analysis specialist ('{ANALYSIS_AGENT}'), for anything numeric
-  or dataset-shaped.
+  or dataset-shaped. It has explicit Excel tools to inspect/read sheets, aggregate columns
+  and compare sheets. Route .xlsx workbooks here, never to research or A2A.
 - `ask_over_a2a` -> the same specialists reached over the A2A protocol via their agent cards.
   Use only when the caller explicitly asks for an A2A hop. Text-only.
 - `list_specialists` -> when asked who you can reach or what they can do.
@@ -370,6 +412,9 @@ call — if a delegation failed, say so plainly instead of inventing its answer.
 
 If the caller attached data or a file, `ask_research` and `ask_analysis` forward it
 automatically as native content parts. Never paste attachment contents into a tool argument.
+For Excel, pass the user's sheet/column names and requested calculations to ask_analysis;
+the specialist must compute with its tools, not guess from a filename. Keep its warnings
+about saved formula results, missing values, unsupported operations or input limits.
 
 Compose the replies into one answer and attribute each section to the agent that produced it,
 for example `### From research-agent`. Start your reply with `[supervisor]`."""

@@ -13,6 +13,7 @@ Runs four checks and prints a verdict matrix:
 Usage:
     python scripts/prove_a2a_parts.py
     python scripts/prove_a2a_parts.py --skip-supervisor
+    python scripts/prove_a2a_parts.py --excel  # also prove Excel byte delivery and calculations
 """
 
 from __future__ import annotations
@@ -153,7 +154,7 @@ def model_answer(text: str) -> str:
             payload = json.loads(match.group(1))
         except json.JSONDecodeError:
             return match.group(0)
-        if isinstance(payload, dict) and payload.get("marker") in (INVENTORY_MARKER, HOP_LOG_MARKER):
+        if isinstance(payload, dict) and payload.get("marker") in (INVENTORY_MARKER, HOP_LOG_MARKER, "EXCEL-ANALYSIS"):
             return ""
         return match.group(0)
 
@@ -394,6 +395,7 @@ async def check_supervisor(client: FoundryResponsesClient) -> dict[str, bool]:
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-supervisor", action="store_true")
+    parser.add_argument("--excel", action="store_true", help="Also verify multi-sheet .xlsx analysis with Python tools")
     args = parser.parse_args()
 
     env = load_env()
@@ -413,7 +415,6 @@ async def main() -> int:
         await a2a.aclose()
         await responses.aclose()
 
-    heading("Verdict")
     rows = [
         ("Agent cards published for every agent", all(discovery.values())),
         ("A2A: text part delivered, task ran to completion", a2a_results["text_ok"]),
@@ -434,6 +435,12 @@ async def main() -> int:
             ("Supervisor delegated to both specialists", supervisor["delegated"]),
             ("Supervisor forwarded data + file parts onward", supervisor["file_forwarded"]),
         ]
+    if args.excel:
+        from prove_excel import run_proof
+
+        rows.append(("Excel delivery and computed results", await run_proof(skip_supervisor=args.skip_supervisor)))
+
+    heading("Verdict")
     for label, ok in rows:
         print(f"  {verdict(ok, label)}")
 

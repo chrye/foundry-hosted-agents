@@ -1,8 +1,8 @@
 """Turn-scoped state shared between the supervisor's middleware and its tools.
 
 The model picks *who* to ask and *what* to ask (a text part). The attachments the caller
-sent on this turn are forwarded verbatim by the tools, without ever passing through the
-model's context window. Each inbound content object is projected twice, because the two
+sent on this turn are forwarded by the tools, without being copied into model-generated
+tool arguments. Each inbound content object is projected twice, because the two
 transports speak different dialects:
 
   * A2A       -> DataPart / FilePart  (built, but Foundry rejects non-text parts today)
@@ -14,12 +14,14 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
 
 from agent_framework import Content, Message
 
 from a2a_client import data_part, file_part_bytes, file_part_uri
+from xlsx_attachments import is_xlsx, workbook_name
 
 _a2a_attachments: ContextVar[list[dict[str, Any]]] = ContextVar("a2a_attachments", default=[])
 _responses_attachments: ContextVar[list[dict[str, Any]]] = ContextVar("responses_attachments", default=[])
@@ -113,7 +115,7 @@ def content_to_a2a_part(content: Content) -> dict[str, Any] | None:
 
 def content_to_responses_part(content: Content) -> dict[str, Any] | None:
     """Map one inbound content object to a Responses input content part."""
-    name = _name_of(content)
+    name = workbook_name(content) if is_xlsx(content) else _name_of(content)
 
     if flattened := _unflatten_file(content):
         filename, body = flattened
@@ -149,12 +151,20 @@ def capture_responses_attachments(messages: list[Message]) -> list[dict[str, Any
     return _capture(messages, content_to_responses_part)
 
 
-def _capture(messages: list[Message], project) -> list[dict[str, Any]]:
+def _capture(
+    messages: list[Message], project: Callable[[Content], dict[str, Any] | None]
+) -> list[dict[str, Any]]:
     parts: list[dict[str, Any]] = []
+    latest_user = next(
+        (message for message in reversed(messages) if str(message.role) in ("user", "Role.USER")),
+        None,
+    )
     for message in messages:
         if str(message.role) not in ("user", "Role.USER"):
             continue
         for content in message.contents:
+            if is_xlsx(content) and message is not latest_user:
+                continue
             part = project(content)
             if part is not None:
                 parts.append(part)

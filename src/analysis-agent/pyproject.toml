@@ -7,4 +7,6 @@ dependencies = [
     "agent-framework-foundry",
     "agent-framework-foundry-hosting>=1.0.0b260813",
     "debugpy",
+    "openpyxl>=3.1.5,<4",
+    "defusedxml>=0.7.1",
 ]

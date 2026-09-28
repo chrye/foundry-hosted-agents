@@ -6,11 +6,13 @@ a data analysis agent that discover each other through **agent cards** and excha
 
 The Sprint 1 results below were measured against the renamed live Foundry project
 (`project-a2a-poc`, account `foundry-fha-kxusxjc5tkc3y`, `swedencentral`,
-`gpt-5.4-mini`) on 2026-09-27. Sprint 2 remains a backlog, not a verified capability.
+`gpt-5.4-mini`), with the transport proof rerun, Excel support verified, and an
+independent peer review of the Excel implementation fixed and re-verified on
+2026-09-28. Sprint 2 remains a backlog, not a verified capability.
 After the setup in §6, reproduce with:
 
 ```powershell
-& $python .\scripts\prove_a2a_parts.py    # exits non-zero if any assertion fails
+& $python .\scripts\prove_a2a_parts.py --excel    # exits non-zero if any assertion fails
 ```
 
 ---
@@ -25,13 +27,13 @@ After the setup in §6, reproduce with:
 |---|---|---|---|
 | R1 | **Supervisor agent** | ✅ Achieved | `supervisor-agent` deployed as a hosted agent; delegated the tested research and analysis requests |
 | R2 | **Research agent** | ✅ Achieved | `research-agent` deployed as a hosted agent; produces briefs using supplied content and model knowledge; no live web search is configured |
-| R3 | **Data analysis agent** | ✅ Achieved | `analysis-agent` deployed as a hosted agent; computed real attainment figures from a supplied CSV |
+| R3 | **Data analysis agent** | ✅ Achieved | CSV analysis plus Python-computed grouped totals and cross-sheet comparisons from a supplied Excel workbook |
 | R4 | **A2A communication** | ✅ Achieved | Live `message/send` → A2A **Task** → `tasks/get` → `completed` with artifacts |
 | R5 | **…via agent card** | ✅ Achieved | Every peer is resolved from `…/endpoint/protocols/a2a/agentCard/v1.0`; the transport URL is read from the card's `supportedInterfaces`, never hard-coded |
 | R6 | **Via the Responses API** | ✅ Achieved | All three hosted agents serve the Responses protocol; the supervisor is driven entirely through it |
 | R7 | **Text part** | ✅ Achieved | Arrives as `received_as: text` |
 | R8 | **Data part** | ✅ Achieved | `application/json` arrives as `received_as: data`, media type and JSON structure intact |
-| R9 | **File part** | ✅ Achieved | `text/csv` arrives with its filename; the model quoted values out of it |
+| R9 | **File part** | ✅ Achieved | CSV content grounding plus `.xlsx` byte/SHA256 delivery and correct multi-sheet tool results through the supervisor |
 | — | *A2A carrying data/file parts* | ❌ **Blocked by platform** | `-32005 Incompatible content types` — see §5 |
 | — | *Hosted agent as an A2A **target*** | ❌ **Blocked by platform** | `-32099 HostedAgentNotSupported` — see §5 |
 
@@ -40,7 +42,8 @@ This does **not** prove multipart A2A between hosted agents. Two things we attem
 blocked by Foundry itself; both are documented, asserted in the harness, and have a migration
 path the day the platform lifts them.
 
-Latest run — **15/15 PASS**, plus **29/29 offline regression tests**:
+Latest run — **32/32 live checks PASS** (15 original transport checks + 17 Excel checks),
+plus **108/108 offline regression tests**:
 
 ```
 PASS Agent cards published for every agent
@@ -60,11 +63,24 @@ PASS Supervisor delegated to both specialists
 PASS Supervisor forwarded data + file parts onward
 ```
 
-All three hosted agents were active: supervisor version **2**, research version **3**,
-analysis version **2**; both prompt front-ends were version **1**. Manual checks also
+All three hosted agents were active: supervisor version **4**, research version **3**,
+analysis version **4**; both prompt front-ends remain version **1**. Manual checks also
 verified both supervisor-to-prompt A2A hops, the native multipart probe, discovery of
 all four peers, and **4% of 50,000 = 2,000**. These are transport/functional checks,
 not a general model-quality evaluation.
+
+Excel verification passed **8/8 direct-analysis** and **9/9 supervisor-path** checks.
+Both paths received identical workbook bytes, discovered `Sales` and `Targets`, invoked
+all four Excel tools, and produced **176,500 actual / 180,000 target / -3,500 difference /
+98.0556% attainment**. The standalone workbook-upload command was also verified live.
+
+A peer review reproduced and fixed 11 Excel defects (false errors on normal Excel files,
+a crash on corrupt archives, a concurrency bug, silent totals-row double counting, a
+grouped-result failure, and research being blocked when a workbook was attached).
+After redeploying version 4, a deliberately messy workbook sent through the supervisor
+was analysed correctly: formatting beyond the table, a chart sheet, a formula saved as ""
+and a `Total` row. The answer kept every warning, and research still ran on the same
+turn without receiving the workbook.
 
 ---
 
@@ -106,18 +122,30 @@ Foundry today gives you **agent-card discovery + A2A invocation** on one side, a
 | | A2A (JSON-RPC) | Responses protocol |
 |---|---|---|
 | Discovery via agent card | ✅ | ✖ (direct endpoint) |
-| Hosted agent as target | ❌ `-32099` | ✅ |
+| Hosted agent as inbound A2A target | ❌ `-32099` | ✅ |
 | Text part | ✅ | ✅ |
 | Data part | ❌ `-32005` | ✅ |
 | File part | ❌ `-32005` | ✅ |
 | Execution model | async **Task** (submit → poll) | request/response |
 
+A2A message file part returns:
+```
+{
+  "code": -32005,
+  "message": "Incompatible content types",
+  "data": {
+    "contentType": "file"
+  }
+}
+```
+The rejection happens at the platform gateway, before the receiving agent can process the file.
+
 So Sprint 1 uses each transport for what it can actually do:
 
-- **A2A** proves R4/R5 — real `message/send` against prompt-agent front-ends, discovered
+- **A2A** proves R4/R5 — real `message/send` (text-only calls) against prompt-agent front-ends, discovered
   through their published cards, following the full Task lifecycle.
 - **Responses** proves R6–R9 — hosted specialist to hosted specialist, carrying text, data
-  and file parts, which is where the real work happens.
+  and file parts (file/data-bearing calls), which is where the real work happens.
 
 The supervisor speaks **both**, and labels every delegation with the transport it used.
 
@@ -138,7 +166,7 @@ Multipart A2A support is a separate gate and must also be retested.
 |---|---|---|
 | `supervisor-agent` | hosted | Decomposes work, picks specialists and transports, forwards attachments, merges answers, emits the hop log. Instructions delegate substantive research/analysis; routing is model-driven. |
 | `research-agent` | hosted | Research brief: summary, key facts, assumptions, open questions. Sources must come from supplied material or be qualified; no browsing tool is configured. |
-| `analysis-agent` | hosted | Quantitative analysis: metrics table, trends, insights, confidence. Intended extension point for Sprint 2 large-file / long-running work, not an implemented executor. |
+| `analysis-agent` | hosted | Quantitative analysis and explicit Python tools for bounded `.xlsx` tables. Large-file / long-running execution and Code Interpreter remain Sprint 2. |
 | `research-agent-a2a` | prompt | A2A front-end for research. Exists only because A2A refuses hosted targets. |
 | `analysis-agent-a2a` | prompt | A2A front-end for analysis. Same reason. |
 
@@ -151,8 +179,8 @@ The model chooses *who* and *what to ask*; the harness owns *how it travels*.
 
 | Tool | Transport | Notes |
 |---|---|---|
-| `ask_research` | Responses | Auto-forwards this turn's attachments |
-| `ask_analysis` | Responses | Auto-forwards this turn's attachments |
+| `ask_research` | Responses | Forwards text and non-Excel attachments; withholds `.xlsx` and records it in the hop log |
+| `ask_analysis` | Responses | Auto-forwards this turn's attachments, including binary `.xlsx` |
 | `ask_over_a2a` | A2A | Text only; reports any attachment it had to leave behind |
 | `list_specialists` | — | Returns each peer's published agent card |
 | `probe_part_support` | both | Sends the same text+data+file payload down both paths and reports what each accepted |
@@ -161,10 +189,60 @@ Attachments are not copied into model-generated tool arguments. They remain avai
 to the receiving agent/model. Middleware captures them once per
 turn into a `ContextVar`, projects them into **both** dialects (A2A `FilePart`/`DataPart` and
 Responses `input_file`/`input_image`), and the tools forward the right projection.
+For Excel specifically, middleware keeps the binary workbook in application state and
+replaces it with metadata before either agent calls the model. The model receives tool
+results, not raw workbook bytes.
+
+### Excel analysis (without Code Interpreter)
+
+```
+caller uploads .xlsx
+  -> supervisor forwards unchanged input_file over Responses
+  -> analysis reads the workbook with openpyxl and computes with explicit Python tools
+  -> model explains those computed results
+```
+
+| Analysis tool | Operation |
+|---|---|
+| `inspect_excel_workbook` | Discover all sheets, dimensions, first-row headers and formula-cache warnings |
+| `read_excel_rows` | Read an explicit page of up to 20 data rows; report total rows and whether more remain |
+| `aggregate_excel` | Sum, average, min, max or nonblank count over a named column, optionally grouped by another column |
+| `compare_excel_sheets` | Sum actuals/targets by a common key across two sheets; compute differences, attainment and totals |
+
+Numeric operations run in Python, not by asking the model to calculate from a preview.
+Duplicate keys are summed; mismatched key sets and invalid numeric values fail explicitly.
+Blank numeric cells are excluded; aggregates report their excluded counts. In grouped
+results, a group with no numeric values is `null` with a warning, while the other groups
+are still computed; ungrouped results and comparisons without numbers fail explicitly
+rather than reporting 0. A zero target has null attainment plus a warning.
+Rows labelled like totals (`Total`, `Grand Total`, `EMEA Total`, `Subtotal`) stay in
+calculations but are named in a warning, because they may double-count detail rows.
+Source values, tool arguments, results and errors remain visible in the evidence.
+
+**Sprint 1 contract**
+
+- One inline `.xlsx` workbook per user turn, using `input_file` and base64 `file_data`.
+  Reattach it on later turns; old workbook attachments are not silently reused.
+- Limits: **5 MiB uploaded bytes**, **20 sheets**, **100,000 cells** across all sheets'
+  used ranges (A1 to the last cell holding a value or formula), plus **20 MiB
+  ZIP-expanded bytes**, **512 archive members** and **1,000 result groups**.
+  Formatting-only cells, merged ranges and dimension hints do not count or create
+  columns. Oversized inputs fail rather than being silently truncated.
+- Table operations require unique, nonempty text headers in the first row.
+  No arbitrary expressions, macros, shell commands or model-generated Python are executed.
+- Formula cells use **saved Excel results**, not formula recalculation. Results may be
+  stale; a formula saved as "" is blank; missing cached values needed by an operation
+  cause a clear error.
+- Chart sheets are skipped with a warning; embedded charts, images and printer settings
+  are ignored. `.xls`, `.xlsm`, encrypted workbooks, remote URL/file-ID resolution and
+  formatted-report interpretation are not supported by these tools.
+- Multi-customer isolation and large/long-running execution are still Sprint 2 concerns.
+  The tools keep per-turn state and test concurrent local calls; this is not a claim
+  of production tenant isolation.
 
 ### The evidence layer
 
-A POC where the model *claims* the file arrived proves nothing. Two machine-readable blocks
+A POC where the model *claims* the file arrived proves nothing. Machine-readable blocks
 are generated by middleware from the actual objects on the wire:
 
 **`A2A-PART-INVENTORY`** — emitted by each specialist, describing what it received:
@@ -181,6 +259,10 @@ are generated by middleware from the actual objects on the wire:
 
 **`A2A-HOP-LOG`** — emitted by the supervisor, one entry per delegation: peer, transport,
 URL, part kinds sent and received, task id, and any protocol error code.
+
+**`EXCEL-ANALYSIS`** — emitted by the analysis application: workbook byte length and SHA256,
+all sheet dimensions, each Excel tool's arguments/results, and explicit failures. The
+supervisor copies this evidence into its analysis hop as `excel_analysis`.
 
 The harness selects the final marked evidence blocks, checks the actual sample JSON and CSV,
 and checks model grounding separately after removing diagnostics. HTTP success alone,
@@ -226,17 +308,22 @@ caller ──input_text + input_file(json) + input_file(csv)──► supervisor
 │   ├── deploy_a2a_frontends.py   Create/patch the two prompt A2A front-ends
 │   ├── lock-agents.ps1           Regenerate uv.lock and normalise it to public PyPI
 │   ├── sync-shared.ps1           Fan src/_shared out into each agent folder
-│   └── prove_a2a_parts.py        The proof harness (4 sections, 15 assertions)
-├── tests/                       29 offline proof and transport regression tests
+│   ├── prove_a2a_parts.py        Original transport proof; --excel also runs workbook proof
+│   ├── prove_excel.py           Direct and supervisor multi-sheet delivery/calculation proof
+│   └── analyze_excel.py         Upload a local workbook and question to the supervisor
+├── tests/                       Offline transport, proof and Excel regression tests
 └── src/
-    ├── _shared/a2a_parts.py      Evidence layer — source of truth, copied per agent
+    ├── _shared/                 Evidence and workbook-attachment helpers, copied per agent
     ├── supervisor-agent/
     │   ├── main.py               Agent, tools, turn middleware, instructions
     │   ├── a2a_client.py         Card discovery, message/send, tasks/get, typed errors
     │   ├── responses_client.py   Peer-to-peer Responses client (carries the payloads)
     │   └── turn_state.py         Attachment capture/projection + hop log
     ├── research-agent/main.py
-    └── analysis-agent/main.py
+    └── analysis-agent/
+        ├── main.py              Model instructions and four explicit Excel tools
+        ├── excel_tools.py       Turn-scoped workbook capture and tool execution evidence
+        └── excel_workbook.py    Bounded parsing and deterministic spreadsheet calculations
 ```
 
 Each agent directory is a self-contained build context (Foundry packages it independently),
@@ -302,7 +389,8 @@ Retire them only after revalidating platform support.
 
 ### 5.4 Explicitly out of scope for Sprint 1
 
-Long-running execution, process execution, large files (3K × 300 / ~75 MB), state
+Code Interpreter, arbitrary code/process execution, long-running execution,
+large files (3K × 300 / ~75 MB), state
 save/restore, conversation isolation, concurrency/SKU/cold-start measurements, BCDR and
 geo constraints. See §8.
 
@@ -317,12 +405,12 @@ session (`az login`, `azd auth login`). Python 3.13+ and `uv` on PATH. The verif
 used azd 1.34.2, local Python 3.14.3, and hosted runtime `python_3_13`.
 The subscription needs model quota and permission to deploy resources and assign roles.
 
-From the repository root, install the script/test dependencies from the supervisor's
-checked-in lock (the scripts share its Azure SDK, HTTP and agent-framework dependencies):
+From the repository root, install the script/test dependencies from the analysis agent's
+checked-in lock (it includes the Azure SDK, agent framework and Excel reader):
 
 ```powershell
-uv sync --project .\src\supervisor-agent --locked --python 3.13 --default-index https://pypi.org/simple
-$python = Join-Path $PWD 'src\supervisor-agent\.venv\Scripts\python.exe'
+uv sync --project .\src\analysis-agent --locked --python 3.13 --default-index https://pypi.org/simple
+$python = Join-Path $PWD 'src\analysis-agent\.venv\Scripts\python.exe'
 ```
 
 ### Step 1 — infrastructure
@@ -381,12 +469,37 @@ agent gets a new identity.
 ### Step 4 — prove it
 
 ```powershell
-& $python -m unittest discover -s tests -v          # 29 offline regression tests
+& $python -m unittest discover -s tests -v          # 108 offline regression tests
 .\scripts\sync-shared.ps1 -Check
 .\scripts\lock-agents.ps1 -Check
 & $python .\scripts\prove_a2a_parts.py                    # 4 sections, 15 assertions
 & $python .\scripts\prove_a2a_parts.py --skip-supervisor  # transport checks only
+& $python .\scripts\prove_excel.py                  # workbook proof only
+& $python .\scripts\prove_a2a_parts.py --excel        # original proof plus workbook proof
 ```
+
+The Excel proof creates an in-memory workbook with `Sales` and `Targets` sheets.
+It checks exact byte length and SHA256, both sheets' dimensions, real inspect/read/
+aggregate/compare tool calls, and exact regional/overall results on both the direct
+analysis path and supervisor delegation. Expected totals are **176,500 actual** versus
+**180,000 target**, a **3,500 shortfall**. Those answers are not given in the prompt.
+Diagnostics are removed before checking that the model explains the computed totals.
+The offline suite additionally covers formula caches (zero, missing and saved-empty
+results), formatting-only cells, chart sheets, printer-settings parts, totals rows,
+all-blank groups, corrupt/unsupported ZIP structures, oversized workbooks, multiple-sheet
+limits, decimal arithmetic, bad headers/keys, explicit tool failures, concurrent parses
+and turn state, research routing with workbooks, and streamed evidence.
+
+### Upload your own workbook
+
+```powershell
+& $python .\scripts\analyze_excel.py .\sales.xlsx --question `
+  "Inspect the sheets, sum revenue on Sales by region, and compare Sales revenue with Targets target using region as the key."
+```
+
+This reads your local file and sends it to the configured Foundry supervisor; it does not
+create a new storage account or enable Code Interpreter. The command reports failure if
+the supervisor does not delegate to analysis or the recorded Excel tool execution fails.
 
 ### Try it by hand
 
@@ -434,7 +547,7 @@ The second half of the whiteboard. Sprint 1 deliberately left the hooks in place
 | Goal | Where it plugs in | What Sprint 1 already gives you |
 |---|---|---|
 | **Long-running work** | `analysis-agent` | A2A is already an async Task model; `a2a_client.py` already polls `tasks/get` with timeout/backoff |
-| **Execute process** | `analysis-agent` | Add a code-interpreter toolbox, or shell out in-container and stream progress |
+| **Code Interpreter / general code execution** | `analysis-agent` | Sprint 1 has bounded, explicit Excel tools only. Sandbox execution, generated charts/files and isolation need separate implementation and verification. |
 | **Large files** (3K rows × 300 cols, ~75 MB) | both specialists | Inline base64 will not scale — move to `input_file` + `file_url`/`file_id`. `file_part_uri` and the `file_url` branch are already written |
 | **State save / restore** | all three | `agent_framework_foundry_hosting` ships `FoundryCheckpointStore` and `FoundryAgentSessionStore` |
 | **Conversation isolation** (engagement ID + agent MI) | supervisor | Platform injects `x-agent-foundry-call-id` / `x-agent-user-id`; `responses_client.py` has the forwarding list |

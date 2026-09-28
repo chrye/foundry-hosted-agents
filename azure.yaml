@@ -139,7 +139,7 @@ services:
             - ai-project
         kind: hosted
         name: analysis-agent
-        description: Turns datasets into metrics, trends and quantified insights.
+        description: Computes metrics, trends and multi-sheet Excel comparisons with explicit Python tools.
         environmentVariables:
             - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
               value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
@@ -167,8 +167,8 @@ services:
                 - responses
                 - a2a
         agentCard:
-            description: Turns datasets into metrics, trends and quantified insights.
-            version: "1.0"
+            description: Computes metrics, trends and multi-sheet Excel comparisons with explicit Python tools over Responses.
+            version: "1.1"
             skills:
                 - id: dataset-analysis
                   name: Dataset analysis
@@ -183,6 +183,15 @@ services:
                   description: Sanity-check the numbers in a research brief and quantify its findings.
                   tags:
                       - validation
+                - id: excel-analysis
+                  name: Bounded Excel workbook analysis
+                  description: Inspect and read .xlsx sheets, aggregate numeric columns and compare actuals to targets across sheets using explicit Python tools. Workbook uploads require Responses, not A2A.
+                  tags:
+                      - excel
+                      - file
+                      - analysis
+                  examples:
+                      - Compare Sales revenue against Targets by region in the attached Excel workbook.
 
     # ----------------------------------------------------------------------------------
     # Existing Foundry project. Infrastructure is owned by infra/main.bicep, so no model
