@@ -1,7 +1,8 @@
 # Foundry Hosted Agents — Sprint 1 POC
 
 Multi-agent system on Microsoft Foundry **hosted agents**: a supervisor, a research agent and
-a data analysis agent that exchange **text, data and file** payloads. The supervisor has no
+a data analysis agent that exchange **text, data and file** payloads (data and file parts
+travel over the Responses API only; A2A carries text). The supervisor has no
 configured peers: it discovers them at runtime from their published **A2A agent cards** and
 routes each sub-task by the skills those cards advertise.
 
@@ -33,15 +34,15 @@ After the setup in §6, reproduce with:
 | R5 | **…via agent card** | ✅ Achieved | No peer is configured. Each turn, the supervisor lists the project's agents, reads each card at `…/endpoint/protocols/a2a/agentCard/v1.0`, and its model picks peers by the cards' skills. A2A calls use the JSONRPC URL from the card's `supportedInterfaces` |
 | R6 | **Via the Responses API** | ✅ Achieved | All three hosted agents serve the Responses protocol; the supervisor is driven entirely through it |
 | R7 | **Text part** | ✅ Achieved | Arrives as `received_as: text` |
-| R8 | **Data part** | ✅ Achieved | `application/json` arrives as `received_as: data`, media type and JSON structure intact |
-| R9 | **File part** | ✅ Achieved | CSV content grounding plus `.xlsx` byte/SHA256 delivery and correct multi-sheet tool results through the supervisor |
-| — | *A2A carrying data/file parts* | ❌ **Blocked by platform** | `-32005 Incompatible content types` — see §5 |
+| R8 | **Data part** | 🟡 Partial | Over the Responses API, `application/json` arrives as `received_as: data`, media type and JSON structure intact. Direct A2A calls reject data parts (`-32005 Incompatible content types`, §5.1) |
+| R9 | **File part** | 🟡 Partial | Over the Responses API: CSV content grounding plus `.xlsx` byte/SHA256 delivery and correct multi-sheet tool results through the supervisor. Direct A2A calls reject file parts (`-32005`, §5.1) |
 | — | *Hosted agent as an A2A **target*** | ❌ **Blocked by platform** | `-32099 HostedAgentNotSupported` — see §5 |
 
-**All nine scorecard requirements are met using the two transports described below.**
-This does **not** prove multipart A2A between hosted agents. Two things we attempted are
-blocked by Foundry itself; both are documented, asserted in the harness, and have a migration
-path the day the platform lifts them.
+**Seven of the nine requirements are fully met. R8 and R9 are partial:** data and file
+parts are delivered over the Responses API, but direct A2A calls reject them, so multipart
+A2A is not proven. Two limits come from Foundry itself: A2A rejects data and file parts
+(§5.1), and hosted agents refuse inbound A2A (§5.2). Both are documented, asserted in the
+harness, and have a migration path the day the platform lifts them.
 
 Latest run — **33/33 live checks PASS** (16 transport checks + 17 Excel checks),
 plus **123/123 offline regression tests**:
@@ -164,8 +165,9 @@ So Sprint 1 uses each transport for what it can actually do:
 
 - **A2A** proves R4/R5 — real `message/send` (text-only calls) against prompt-agent front-ends, discovered
   through their published cards, following the full Task lifecycle.
-- **Responses** proves R6–R9 — hosted specialist to hosted specialist, carrying text, data
-  and file parts (file/data-bearing calls), which is where the real work happens.
+- **Responses** proves R6 and R7 and delivers R8/R9's data and file parts — hosted specialist
+  to hosted specialist, carrying text, data and file parts (file/data-bearing calls), which is
+  where the real work happens. A2A cannot carry those parts, which is why R8 and R9 are partial.
 
 The supervisor speaks **both**, and labels every delegation with the transport it used.
 It does not decide per peer in code. Text goes first over A2A, to the interface on the
@@ -405,8 +407,9 @@ so `src/_shared` is the single source of truth and `sync-shared.ps1` fans it out
 
 ## 5. What was **not** achieved, and why
 
-Both gaps are platform limitations with reproducible error codes. Neither is a sprint
-requirement — both were attempts to go further.
+Both gaps are platform limitations with reproducible error codes. The first (§5.1) is why
+R8 and R9 are only partially achieved; the second (§5.2) was an attempt to go further than
+the requirements.
 
 ### 5.1 A2A cannot carry data or file parts
 
@@ -423,7 +426,8 @@ POST …/agents/research-agent-a2a/endpoint/protocols/a2a?api-version=v1
 Identical result with `{"kind":"file"}` (`contentType: "file"`). Consistent with every agent
 card advertising `defaultInputModes: ["text"]`.
 
-**Impact:** none on Sprint 1 — R7/R8/R9 are satisfied over the Responses transport.
+**Impact:** R8 and R9 are partial: data and file parts reach the agents only over the
+Responses transport. Text (R7) works over both.
 **Workaround:** `ask_agent` over A2A reports what it had to leave behind rather than dropping
 it silently, and attachments go over Responses to agents whose cards accept them. The A2A
 `FilePart`/`DataPart` builders are written and unit-tested, ready for the day the gate
