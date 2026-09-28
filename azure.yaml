@@ -7,7 +7,7 @@ requiredVersions:
 name: foundry-hosted-agents-a2a-poc
 services:
     # ----------------------------------------------------------------------------------
-    # Supervisor: fans work out to the specialists over A2A and composes their answers.
+    # Supervisor: discovers peers from their A2A agent cards, routes work and composes answers.
     # ----------------------------------------------------------------------------------
     supervisor-agent:
         project: src/supervisor-agent
@@ -17,18 +17,10 @@ services:
             - ai-project
         kind: hosted
         name: supervisor-agent
-        description: Routes requests to Foundry research and analysis specialists over A2A and composes their answers.
+        description: Discovers peer agents from their A2A agent cards, routes each sub-task to the best-matching agent and composes their answers.
         environmentVariables:
             - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
               value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
-            - name: RESEARCH_AGENT_NAME
-              value: research-agent
-            - name: ANALYSIS_AGENT_NAME
-              value: analysis-agent
-            - name: RESEARCH_A2A_AGENT_NAME
-              value: research-agent-a2a
-            - name: ANALYSIS_A2A_AGENT_NAME
-              value: analysis-agent-a2a
         codeConfiguration:
             dependencyResolution: remote_build
             entryPoint: main.py
@@ -53,12 +45,12 @@ services:
                 - responses
                 - a2a
         agentCard:
-            description: Routes requests to Foundry research and analysis specialists over A2A and composes their answers.
-            version: "1.0"
+            description: Discovers peer agents from their A2A agent cards, routes each sub-task to the best-matching agent and composes their answers.
+            version: "1.1"
             skills:
                 - id: orchestrate-research-and-analysis
-                  name: Research and analysis orchestration
-                  description: Decompose a request, delegate the parts to the research and analysis specialists, and merge their answers into one attributed response.
+                  name: Card-based orchestration
+                  description: Discover the project's agents from their A2A cards, delegate the parts of a request to the agents whose skills match, and merge their answers into one attributed response.
                   tags:
                       - orchestration
                       - a2a

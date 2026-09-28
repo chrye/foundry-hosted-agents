@@ -88,6 +88,18 @@ def hops():
     } for peer in proof.HOSTED]
 
 
+def discovery(names=(*proof.HOSTED, *proof.A2A_FRONT_ENDS)):
+    return {
+        "source": "GET {project}/agents + each agent's /endpoint/protocols/a2a/agentCard/v1.0",
+        "agents": [{
+            "name": name,
+            "kind": "prompt" if name in proof.A2A_FRONT_ENDS else "hosted",
+            "card_url": f"https://offline.invalid/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0",
+            "skills": ["skill"],
+        } for name in names],
+    }
+
+
 class ProofTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.output = contextlib.redirect_stdout(io.StringIO())
@@ -111,11 +123,12 @@ class ProofTests(unittest.IsolatedAsyncioTestCase):
         return (await proof.check_responses(client))[proof.HOSTED[0]]
 
     async def check_supervisor(self, hop_list, *, answer="Both specialists evaluated the data.",
-                               status="completed", prefix=""):
+                               status="completed", prefix="", found=None):
         client = AsyncMock()
         client.endpoint_url = lambda _: "https://offline.invalid/responses"
+        evidence = {"hops": hop_list} if found is False else {"discovery": found or discovery(), "hops": hop_list}
         client.send.return_value = response(
-            prefix + answer + "\n" + marked(proof.HOP_LOG_MARKER, hops=hop_list),
+            prefix + answer + "\n" + marked(proof.HOP_LOG_MARKER, **evidence),
             status=status,
         )
         return await proof.check_supervisor(client)
@@ -216,6 +229,22 @@ class ProofTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_both_specialists_with_received_attachments_pass(self):
         self.assertTrue(all((await self.check_supervisor(hops())).values()))
+
+    async def test_peers_must_come_from_card_discovery(self):
+        bad_card = discovery()
+        bad_card["agents"][0]["card_url"] = "https://offline.invalid/configured/research-agent"
+        stray = hops()
+        stray.append({**stray[0], "peer": "undiscovered-agent"})
+        for label, found, items in [
+            ("no discovery record", False, hops()),
+            ("missing front-end", discovery(proof.HOSTED), hops()),
+            ("supervisor discovered itself", discovery((*proof.HOSTED, *proof.A2A_FRONT_ENDS, proof.SUPERVISOR)), hops()),
+            ("not an agent card", bad_card, hops()),
+            ("hop to an undiscovered peer", None, stray),
+            ("no delegation", None, []),
+        ]:
+            with self.subTest(label):
+                self.assertFalse((await self.check_supervisor(items, found=found))["discovered"])
 
     async def test_arbitrary_peers_do_not_prove_expected_specialists(self):
         items = hops()

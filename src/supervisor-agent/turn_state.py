@@ -26,6 +26,7 @@ from xlsx_attachments import is_xlsx, workbook_name
 _a2a_attachments: ContextVar[list[dict[str, Any]]] = ContextVar("a2a_attachments", default=[])
 _responses_attachments: ContextVar[list[dict[str, Any]]] = ContextVar("responses_attachments", default=[])
 _hop_log: ContextVar[list[dict[str, Any]]] = ContextVar("a2a_hop_log", default=[])
+_discovery: ContextVar[dict[str, Any] | None] = ContextVar("a2a_discovery", default=None)
 
 HOP_LOG_MARKER = "A2A-HOP-LOG"
 
@@ -200,16 +201,25 @@ def attachment_summary() -> list[dict[str, Any]]:
 
 def reset_hop_log() -> None:
     _hop_log.set([])
+    _discovery.set(None)
 
 
 def record_hop(hop: dict[str, Any]) -> None:
     _hop_log.get().append(hop)
 
 
+def set_discovery(discovery: dict[str, Any]) -> None:
+    """Record which peers this turn's routing could choose from, and where they came from."""
+    _discovery.set(discovery)
+
+
 def hop_log_block() -> str:
-    """Render this turn's delegations as a fenced block the proof harness parses."""
-    payload = json.dumps({"marker": HOP_LOG_MARKER, "hops": _hop_log.get()}, indent=2)
-    return f"```json\n{payload}\n```"
+    """Render this turn's discovery and delegations as a block the proof harness parses."""
+    payload: dict[str, Any] = {"marker": HOP_LOG_MARKER}
+    if (discovery := _discovery.get()) is not None:
+        payload["discovery"] = discovery
+    payload["hops"] = _hop_log.get()
+    return f"```json\n{json.dumps(payload, indent=2)}\n```"
 
 
 def with_hop_log_evidence(agent):
@@ -230,7 +240,7 @@ def with_hop_log_evidence(agent):
         def expand(update: AgentResponseUpdate) -> list[AgentResponseUpdate]:
             if update.finish_reason is None:
                 return [update]
-            if not _hop_log.get():
+            if not _hop_log.get() and _discovery.get() is None:
                 return [update]
             evidence = AgentResponseUpdate(
                 contents=[Content.from_text("\n\n" + hop_log_block())],

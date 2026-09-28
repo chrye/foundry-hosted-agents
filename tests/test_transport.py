@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "supervisor
 import main as supervisor
 from a2a_client import A2AError, FoundryA2AClient, file_part_bytes, file_part_uri
 from a2a_parts import inventory_block
+from agent_directory import Peer
 from agent_framework import Content, Message
 from responses_client import FoundryResponsesClient, ResponsesError, ResponsesReply
 from turn_state import (
@@ -21,6 +22,23 @@ from turn_state import (
     reset_hop_log,
     set_attachments,
 )
+
+
+def peer(name, *tags, kind="hosted"):
+    return Peer(name, kind, f"https://example.test/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0",
+                {"description": name, "skills": [{"id": "skill", "name": "Skill", "description": "d",
+                                                  "tags": list(tags)}]})
+
+
+class FakeDirectory:
+    def __init__(self, *peers):
+        self._peers = {item.name: item for item in peers}
+
+    async def peers(self, *, refresh=False):
+        return dict(self._peers)
+
+    async def get(self, name):
+        return self._peers.get(name)
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
@@ -92,9 +110,11 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             text=inventory_block(received), status="completed", content_types=["output_text"]
         )
         reset_hop_log()
+        directory = FakeDirectory(peer("research-agent-a2a", kind="prompt"), peer("research-agent", "file"))
         with patch.object(supervisor, "_clients", AsyncMock(return_value=(AsyncMock(), responses))), \
-             patch.object(supervisor, "_delegate_a2a", AsyncMock(return_value="known limit")):
-            await supervisor.probe_part_support()
+             patch.object(supervisor, "_get_directory", AsyncMock(return_value=directory)), \
+             patch.object(supervisor, "_delegate_a2a", AsyncMock(return_value=("known limit", {}))):
+            await supervisor.probe_part_support("research-agent-a2a", "research-agent")
         content = responses.send.call_args.args[1]
         self.assertEqual([part["type"] for part in content], ["input_text", "input_file", "input_file"])
         payload = json.loads(base64.b64decode(content[1]["file_data"].partition(",")[2]))
@@ -109,7 +129,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         reset_hop_log()
         set_attachments([], [])
         with patch.object(supervisor, "_clients", AsyncMock(return_value=(AsyncMock(), responses))):
-            await supervisor._delegate_responses("research-agent", "research")
+            await supervisor._delegate_responses(peer("research-agent", "file"), "research", [], [])
         self.assertIn('"received_parts"', hop_log_block())
         self.assertEqual(supervisor._received_parts(responses.send.return_value.text), received)
 

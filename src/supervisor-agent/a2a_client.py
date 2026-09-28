@@ -179,6 +179,25 @@ class FoundryA2AClient:
     def card_url(self, agent_name: str) -> str:
         return f"{self._project_endpoint}/agents/{agent_name}/{AGENT_CARD_PATH}"
 
+    async def list_project_agents(self, *, page_size: int = 100) -> list[dict[str, Any]]:
+        """List every agent in the Foundry project: the registry peers are discovered from."""
+        agents: list[dict[str, Any]] = []
+        params = {"api-version": "v1", "limit": str(page_size)}
+        while True:
+            response = await self._client.get(
+                f"{self._project_endpoint}/agents", params=params, headers=await self._auth_header()
+            )
+            if response.status_code >= 400:
+                raise A2AError(f"Listing project agents failed ({response.status_code}): {response.text[:500]}")
+            payload = response.json()
+            agents.extend(item for item in payload.get("data") or [] if isinstance(item, dict))
+            last_id = payload.get("last_id")
+            if not payload.get("has_more") or not last_id:
+                return agents
+            if params.get("after") == last_id:
+                raise A2AError(f"Listing project agents did not advance past page cursor '{last_id}'.")
+            params["after"] = str(last_id)
+
     async def fetch_agent_card(self, agent_name: str, *, refresh: bool = False) -> dict[str, Any]:
         """GET the peer's agent card. This is the discovery step of the POC."""
         if not refresh and agent_name in self._cards:

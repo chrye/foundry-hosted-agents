@@ -29,6 +29,7 @@ sys.path[:0] = [str(ROOT / "src" / "analysis-agent"), str(ROOT / "src" / "superv
 
 import excel_tools
 from a2a_parts import ReceivedPartsMiddleware, describe_messages, inventory_block
+from agent_directory import Peer
 from responses_client import FoundryResponsesClient, ResponsesReply
 from turn_state import (
     capture_a2a_attachments,
@@ -79,6 +80,28 @@ def workbook_message(payload, filename="sales.xlsx"):
 
 def context(messages, *, stream=False):
     return AgentContext(agent=Mock(spec=Agent), messages=messages, stream=stream)
+
+
+def card_peer(name, *tags):
+    """A peer as discovered from its agent card; attachment support comes from skill tags."""
+    return Peer(name, "hosted", f"https://example.test/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0",
+                {"description": name, "skills": [{"id": "skill", "name": "Skill", "description": "d",
+                                                  "tags": list(tags)}]})
+
+
+class FakeDirectory:
+    def __init__(self, *peers):
+        self._peers = {peer.name: peer for peer in peers}
+
+    async def peers(self, *, refresh=False):
+        return dict(self._peers)
+
+    async def get(self, name):
+        return self._peers.get(name)
+
+
+DIRECTORY = FakeDirectory(card_peer("analysis-agent", "analysis", "excel", "file"),
+                          card_peer("research-agent", "research", "file"))
 
 
 async def compute():
@@ -323,9 +346,10 @@ class ExcelToolIntegrationTests(unittest.IsolatedAsyncioTestCase):
         try:
             async def supervisor_call():
                 self.assertTrue(all(part.type == "text" for part in supervisor_request.messages[0].contents))
-                await supervisor.ask_analysis("Compare the workbook sheets.")
+                await supervisor.ask_agent("analysis-agent", "Compare the workbook sheets.")
 
-            with patch.object(supervisor, "_clients", AsyncMock(return_value=(AsyncMock(), client))):
+            with patch.object(supervisor, "_clients", AsyncMock(return_value=(AsyncMock(), client))), \
+                    patch.object(supervisor, "_get_directory", AsyncMock(return_value=DIRECTORY)):
                 await supervisor.SupervisorTurnMiddleware().process(supervisor_request, supervisor_call)
             hop = json.loads(hop_log_block().split("```json\n")[1].split("```")[0])["hops"][0]
             self.assertEqual(hop["peer"], "analysis-agent")
@@ -351,10 +375,11 @@ class ExcelToolIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async def next_call():
-            answer = await supervisor.ask_research("What drives revenue seasonality?")
+            answer = await supervisor.ask_agent("research-agent", "What drives revenue seasonality?")
             self.assertIn("not sent to 'research-agent': sales.xlsx", answer)
 
-        with patch.object(supervisor, "_clients", AsyncMock(return_value=(AsyncMock(), responses))):
+        with patch.object(supervisor, "_clients", AsyncMock(return_value=(AsyncMock(), responses))), \
+                patch.object(supervisor, "_get_directory", AsyncMock(return_value=DIRECTORY)):
             await supervisor.SupervisorTurnMiddleware().process(request, next_call)
         sent = responses.send.call_args.args[1]
         self.assertEqual([part["type"] for part in sent], ["input_text", "input_file"])

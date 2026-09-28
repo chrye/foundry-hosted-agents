@@ -47,13 +47,13 @@ async def main() -> int:
         ])
         print(reply.text)
         hops = (extract_marked_json(reply.text, "A2A-HOP-LOG") or {}).get("hops") or []
+        # The supervisor chooses the Excel-capable agent from agent cards, so find it by evidence.
         analysis_hops = [
             hop for hop in hops
-            if isinstance(hop, dict) and hop.get("peer") == "analysis-agent"
-            and hop.get("transport") == "responses"
+            if isinstance(hop, dict) and hop.get("transport") == "responses" and "excel_analysis" in hop
         ]
         if not analysis_hops:
-            print("ERROR: No analysis-agent Responses delegation was recorded.", file=sys.stderr)
+            print("ERROR: No Responses delegation returned Excel analysis evidence.", file=sys.stderr)
             return 1
         for hop in analysis_hops:
             evidence = hop.get("excel_analysis") or {}

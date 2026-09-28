@@ -337,10 +337,13 @@ async def check_supervisor(client: FoundryResponsesClient) -> dict[str, bool]:
 
     # Hosted agents must be called through their own agent endpoint; the project-level
     # /responses route with an agent_reference is rejected with `bad_request`.
+    # Both sub-tasks are about the attachments, so card-based routing should pick agents whose
+    # cards accept files (the hosted specialists), not the text-only A2A front-ends.
     content = [
         text_content(
-            "Research how regional cloud sales are benchmarked, then have analysis evaluate "
-            "the attached CSV against the attached FY26Q1 targets. Keep it short."
+            "Have a research agent review the attached CSV and targets and say how regional "
+            "cloud sales like these are usually benchmarked, then have an analysis agent "
+            "evaluate the attached CSV against the attached FY26Q1 targets. Keep it short."
         ),
         json_content("targets.json", SAMPLE_DATA),
         file_content("regional-sales.csv", "text/csv", SAMPLE_CSV),
@@ -352,11 +355,17 @@ async def check_supervisor(client: FoundryResponsesClient) -> dict[str, bool]:
         reply = await client.send(SUPERVISOR, content)
     except ResponsesError as exc:
         print(f"  {verdict(False, 'supervisor call')}\n      {exc}")
-        return {"responded": False, "hop_log": False, "delegated": False, "file_forwarded": False}
+        return {"responded": False, "hop_log": False, "discovered": False, "delegated": False,
+                "file_forwarded": False}
 
     text = reply.text
     hop_log = extract_marked_json(text, HOP_LOG_MARKER)
     hops = received_parts((hop_log or {}).get("hops"))
+    discovery = (hop_log or {}).get("discovery") if isinstance((hop_log or {}).get("discovery"), dict) else {}
+    discovered = {
+        agent.get("name") for agent in received_parts(discovery.get("agents"))
+        if str(agent.get("card_url", "")).endswith("/agentCard/v1.0")
+    }
     successful = [
         hop for hop in hops
         if hop.get("ok") is True and hop.get("transport") == "responses"
@@ -374,11 +383,18 @@ async def check_supervisor(client: FoundryResponsesClient) -> dict[str, bool]:
     checks = {
         "responded": reply.status == "completed" and bool(model_answer(text)),
         "hop_log": hop_log is not None,
+        # Peers must come from runtime discovery (project listing + agent cards), exclude the
+        # supervisor itself, and every delegation must target a discovered peer.
+        "discovered": (
+            set(HOSTED) | set(A2A_FRONT_ENDS) <= discovered and SUPERVISOR not in discovered
+            and bool(hops) and all(hop.get("peer") in discovered for hop in hops)
+        ),
         "delegated": set(HOSTED).issubset(peers),
         "file_forwarded": set(HOSTED).issubset(forwarded_peers),
     }
     print(f"  {verdict(checks['responded'], 'supervisor returned a response')}")
     print(f"  {verdict(checks['hop_log'], f'{HOP_LOG_MARKER} evidence block present')}")
+    print(f"  {verdict(checks['discovered'], f'peers discovered from agent cards: {sorted(discovered)}')}")
     print(f"  {verdict(checks['delegated'], f'delegated to both specialists (reached: {sorted(peers)})')}")
     print(f"  {verdict(checks['file_forwarded'], 'data + file parts received by both specialists')}")
     for hop in hops:
@@ -432,6 +448,7 @@ async def main() -> int:
         rows += [
             ("Supervisor answered over Responses API", supervisor["responded"]),
             ("Supervisor emitted a hop log", supervisor["hop_log"]),
+            ("Supervisor discovered its peers from agent cards", supervisor["discovered"]),
             ("Supervisor delegated to both specialists", supervisor["delegated"]),
             ("Supervisor forwarded data + file parts onward", supervisor["file_forwarded"]),
         ]
