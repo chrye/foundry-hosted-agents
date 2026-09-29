@@ -1,58 +1,45 @@
-In the Foundry portal, I see a list of 5 agents in `project-a2a-poc` (account `foundry-fha-kxusxjc5tkc3y`), as of 2026-09-28:
-- supervisor-agent
-- analysis-agent
-- research-agent
-- analysis-agent-a2a
-- research-agent-a2a
+# Why five agents?
 
-The two `-a2a` agents are **prompt agents**: just a model plus an instructions string. The
-other three are **hosted agents**: the POC's Python code running in containers. The portal's
-"Type" column says "Agent" for all five, so it hides this difference. The live agent
-definitions show `kind: prompt` for the two `-a2a` agents and `kind: hosted` for the other
-three.
+Recorded deployment on **2026-09-28**: `project-a2a-poc`, account
+`foundry-fha-kxusxjc5tkc3y`.
 
-**Why they exist:** Foundry won't accept an incoming A2A call to a hosted agent (it returns
-`-32099 HostedAgentNotSupported`). To show a real A2A call working (`message/send`, then the
-task running to completion), the POC needed prompt agents on the receiving end.
-[deploy_a2a_frontends.py](./scripts/deploy_a2a_frontends.py) creates them and turns on A2A
-for each.
-
-**How the supervisor finds them:** it has no list of names. Each turn it lists the project's
-agents, reads the A2A card of every agent except itself, and its model picks agents by the
-skills on those cards. So it sees 4 peers, and the two `-a2a` agents show up as peers in
-their own right. `research-agent-a2a` has the same `research-brief` skill as
-`research-agent`. In the catalog they differ by description, by `kind` (prompt or hosted),
-and by the attachment tags (`file`, `excel`), which only the hosted specialists have.
-
-| | `research-agent-a2a`, `analysis-agent-a2a` | `supervisor-agent`, `research-agent`, `analysis-agent` |
+| Agent | Kind / version | Role |
 |---|---|---|
-| Type (live) | `prompt`: `gpt-5.4-mini` plus instructions, **no tools, no code** | `hosted`: Python 3.13 container running `main.py` (0.5–1 CPU) |
-| Created by | `deploy_a2a_frontends.py`; not in `azure.yaml` | `azd deploy` from [azure.yaml](./azure.yaml) |
-| Code behind it | None | Middleware that reports exactly what each agent received. `analysis-agent` has 4 Excel tools. `supervisor-agent` has 3 tools (`ask_agent`, `list_agents`, `probe_part_support`) and discovers the others from their cards at runtime |
-| Can other agents call it over A2A? | Yes, text only | No (`-32099`) |
-| Can it receive files or data? | No. Their cards have no `file` / `excel` tags, so the supervisor never forwards attachments to them | Yes, over the Responses API. The `file` tag on research's card and the `file` + `excel` tags on analysis's card are what make the supervisor forward attachments to them |
-| Who calls it | The supervisor's `ask_agent` over A2A: when the caller asks for an A2A hop, or when the model picks one for a text-only sub-task. Also `probe_part_support` and the test script ([prove_a2a_parts.py](./scripts/prove_a2a_parts.py)) | research/analysis: the supervisor's `ask_agent`, the path that does the real work. Text tries A2A first, is refused, and then uses Responses; attachments go straight over Responses. supervisor: the client |
-| Card skills | 1 each, no attachment tags: `research-brief`; `quantitative-review` | supervisor: 2; research: 2, incl. `document-review` (`file`, `data`); analysis: 3, incl. `excel-analysis` (`excel`, `file`, `analysis`) |
-| Versions | v1; changes only when the script is re-run | New version on every `azd deploy`; now supervisor v5, research v3, analysis v4 |
+| `supervisor-agent` | hosted / 5 | Python orchestration with `ask_agent`, `list_agents`, `probe_part_support` and a hop log |
+| `research-agent` | hosted / 3 | Research from supplied content/model knowledge; receipt evidence; no browsing tool |
+| `analysis-agent` | hosted / 4 | Dataset analysis, four explicit Excel tools, receipt and calculation evidence |
+| `research-agent-a2a` | prompt / 1 | Independent research persona, model and instructions only |
+| `analysis-agent-a2a` | prompt / 1 | Independent quantitative persona, model and instructions only |
 
-**The main thing to know: they are not proxies.** Calling `research-agent-a2a` never reaches
-`research-agent`. It's a separate model answering from its own copied instructions, and those
-instructions differ from the originals:
+The hosted agents run Python 3.13 and deploy through [azure.yaml](./azure.yaml).
+[deploy_a2a_frontends.py](./scripts/deploy_a2a_frontends.py) creates versions of the two
+prompt agents, with no tools, and enables both Responses and A2A on their endpoints.
 
-- The hosted [research-agent](./src/research-agent/main.py#L18) and
-  [analysis-agent](./src/analysis-agent/main.py#L20) are told to use attachments, cite sources
-  and use the Excel tools.
-- The `-a2a` copies are told they only get text.
+**Why the extra two?** The tested Foundry gateway refused hosted A2A targets
+(`-32099 HostedAgentNotSupported`). Prompt targets completed text-only A2A Tasks.
+They let the POC demonstrate A2A without claiming that it invokes the hosted Python code.
+Native A2A data/file parts were rejected (`-32005`); this is a measured Foundry limitation,
+not a restriction of every A2A implementation.
 
-So their answers can differ from the hosted agents' answers and will drift if either side is
-edited. A successful A2A call to them shows that A2A works. It says nothing about how the
-hosted specialists behave. When "supervisor talks to research over A2A", it is really talking
-to a stand-in for research. With card-based routing, the model can also pick a stand-in for
-a text-only sub-task, because both research agents advertise the same skill. The hop log's
-`peer` field says which agent actually answered. The [README](./README.md)'s convergence
-plan is to retire both once Foundry accepts incoming A2A calls to hosted agents.
+**They are not proxies.** Calling a `-a2a` agent does not call its hosted namesake or its
+Excel tools. Both research cards advertise `research-brief`, so the model can select
+either for a text task. Check `peer` in the hop log to see who answered.
 
-**Call flow, starting from the client call:**
+**Discovery and files.** The supervisor reads project agents and their cards, excludes
+itself using `FOUNDRY_AGENT_NAME`, and caches the directory for 5 minutes.
+`list_agents` and an unknown-name lookup refresh it. No peer map is configured.
+Ordinary delegation sends uploads only to a selected peer with the relevant skill tag:
+`file` for non-workbook attachments, `excel` for `.xlsx`. Currently research has `file`,
+analysis has both, and the prompt agents have neither. These tags control forwarding,
+not file-format support or trust; prompt-agent multipart Responses support was not tested.
+
+See the [README](./README.md) for exact Excel limits, verification results and the plan
+to retire the front-ends after hosted inbound A2A support is reverified.
+
+## Call flow
+
+This illustrates the recorded deployment's normal paths, not a guaranteed tool order.
+It starts with a supervisor request; the proof scripts also call specialists directly.
 
 ![Sequence diagram of the call flow from the client through supervisor-agent to the specialists](./NotesToSelf-call-flow.svg)
 
@@ -90,25 +77,23 @@ sequenceDiagram
     loop Until the model stops calling tools
         S->>M: instructions, card catalog,<br/>history, tool results so far
         M-->>S: next tool call
-        alt ask_agent to a hosted agent, text only (research-agent here)
-            S->>F: A2A message/send<br/>(first call per process only)
-            F-->>S: -32099 HostedAgentNotSupported<br/>(remembered, later calls skip A2A)
+        alt ask_agent auto, no eligible attachments (hosted research example)
+            opt No remembered refusal for this peer
+                S->>F: A2A message/send at card URL
+                F-->>S: -32099 HostedAgentNotSupported<br/>(remember refusal for this process)
+            end
             S->>R: Responses: text
             R-->>S: answer + A2A-PART-INVENTORY
-        else ask_agent to a hosted agent, with attachments (analysis-agent here)
+        else ask_agent auto with eligible workbook (hosted analysis example)
             S->>A: Responses: text + the attachments<br/>its card accepts (file / excel tags)
-            Note over A: its model calls the<br/>Python Excel tools
+            Note over A: its model calls explicit<br/>Python tools for .xlsx
             A-->>S: analysis + A2A-PART-INVENTORY<br/>+ EXCEL-ANALYSIS
         else ask_agent to a prompt agent (A2A)
-            S->>P: message/send (text part only)
-            P-->>S: task, state submitted
-            loop Until the task completes
-                S->>P: tasks/get
-                P-->>S: task state, then artifacts
-            end
-            Note over S,P: Attachments stay behind (A2A is text-only)
+            S->>P: blocking message/send at card URL (text only)
+            P-->>S: completed Task + text artifact
+            Note over S,P: ask_agent withholds uploads on this A2A path.<br/>tasks/get polling exists for pending Tasks (unit-tested only).
         else list_agents or probe_part_support
-            Note over S,P: list_agents: re-reads the agent list and all cards.<br/>probe_part_support: sends text + data + file<br/>both ways. A2A rejects it (-32005),<br/>Responses accepts it.
+            Note over S,P: list_agents: refreshes the directory.<br/>probe_part_support: synthetic JSON and CSV,<br/>not caller uploads. Native A2A parts are rejected<br/>(-32005). Responses files are delivered.
         end
     end
 
@@ -120,26 +105,15 @@ sequenceDiagram
 
 </details>
 
-How to read it:
+### Reading the evidence
 
-- **Start:** the client only ever calls `supervisor-agent`, over the Responses API.
-- **Discovery:** before its model runs, the supervisor lists the project's agents and reads
-  every card except its own (cached for 5 minutes). No peer names are configured. The
-  hop log's `discovery` block shows what was found.
-- **The loop:** each round, the supervisor's model picks an agent from the card catalog and
-  a tool, so routing is decided by the model and the cards, not hard-coded. The
-  instructions say to call research first when both specialists are needed, but the order
-  isn't guaranteed. In the measured runs the model often called both at once.
-- **Hosted agents, text only:** `ask_agent` tries A2A first, at the URL on the card. The
-  Foundry gateway refuses hosted targets (`-32099`), so the supervisor falls back to
-  Responses and remembers the refusal. Later calls in the same process go straight to
-  Responses.
-- **Attachments:** they always go over Responses, and only to agents whose card skills carry
-  the matching tag (`file`, or `excel` for `.xlsx`). Today research gets JSON and CSV but not
-  `.xlsx`, analysis gets everything, and the `-a2a` stand-ins get nothing.
-- **Prompt agents:** reached over A2A as text only, when the caller asks for an A2A hop or
-  the model picks one for a text-only sub-task.
-- **End:** the hop log (discovery plus every hop) is added to the final answer before it
-  returns to the client.
-
-
+- `auto` tries A2A only when no eligible attachments need forwarding and no refusal is
+  remembered. After a hosted refusal, it uses Responses. Explicit `a2a` never falls back;
+  explicit `responses` bypasses A2A.
+- The research-before-analysis order is an instruction, not an enforced dependency.
+  Calls may run concurrently.
+- Discovery is an initial per-turn snapshot, not a live health guarantee. Card-fetch
+  failures omit the peer with a warning; directory-listing failures appear in the hop log.
+- The supervisor appends discovery and hops; hosted specialists report received content.
+  Analysis adds workbook hashes and tool results. These are application diagnostics,
+  not signed attestations or proof of caller isolation.

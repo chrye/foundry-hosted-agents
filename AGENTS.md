@@ -4,10 +4,11 @@ This project was built with the microsoft-foundry skill. Before working on or an
 
 ## What this repo is
 
-A Phase 1 POC proving how far Microsoft Foundry **hosted agents** can go as a multi-agent
+A Sprint 1 POC proving how far Microsoft Foundry **hosted agents** can go as a multi-agent
 system: a supervisor plus research and analysis specialists, agent-card discovery, and
-text / data / file payloads. See [README.md](README.md) for the measured platform behaviour
-and the Phase 2 backlog.
+text / data / file payloads (JSON/CSV/Excel over Responses; the tested Foundry A2A path
+accepts text only).
+See [README.md](README.md) for the measured platform behaviour and the Sprint 2 backlog.
 
 ## Conventions
 
@@ -19,7 +20,9 @@ and the Phase 2 backlog.
   the registry and wheel/sdist URLs in `uv.lock` back to public PyPI, matching artifacts
   by exact SHA256. A private artifact URL can break `azd deploy` even when the registry
   looks public. Use `-Check` to verify public URLs and offline lock freshness.
-- Keep each agent's `.azdignore` to `.env.example`. Extra patterns break the code package.
-- Claims about transport behaviour belong in the proof harness, not in prose. If you change
-  how parts are carried, update `scripts/prove_a2a_parts.py` so it still exits non-zero when
-  the claim stops holding.
+- Keep the working `.azdignore` (`.env.example` only) unless packaging and deployment are
+  revalidated. Previous additions broke the tested code-deployment workflow.
+- Ground documentation claims in code and dated results. Separate configured behaviour,
+  measured capabilities and backlog items; a passing expected-rejection test is not support.
+- If part transport or workbook behaviour changes, update `scripts/prove_a2a_parts.py`,
+  `scripts/prove_excel.py` and the relevant offline tests. Preserve failure exits.

@@ -1,16 +1,14 @@
 # Foundry Hosted Agents — Sprint 1 POC
 
-Multi-agent system on Microsoft Foundry **hosted agents**: a supervisor, a research agent and
-a data analysis agent that exchange **text, data and file** payloads (data and file parts
-travel over the Responses API only; A2A carries text). The supervisor has no
-configured peers: it discovers them at runtime from their published **A2A agent cards** and
-routes each sub-task by the skills those cards advertise.
+Three Python hosted agents: a supervisor, research specialist and analysis specialist.
+The supervisor discovers peers from **A2A agent cards**, rather than a configured name map.
+In the tested Foundry deployment, **text works over A2A to two prompt-agent front-ends**;
+JSON, CSV and Excel uploads use the **Responses API**.
 
-The Sprint 1 results below were measured against the renamed live Foundry project
-(`project-a2a-poc`, account `foundry-fha-kxusxjc5tkc3y`, `swedencentral`,
-`gpt-5.4-mini`). The measurements cover the transport proof, Excel support, an independent
-peer review of the Excel implementation, and card-based supervisor routing, all re-verified
-on 2026-09-28. Sprint 2 remains a backlog, not a verified capability.
+Results below are from **2026-09-28**, in `project-a2a-poc`
+(`foundry-fha-kxusxjc5tkc3y`, `swedencentral`, `gpt-5.4-mini`).
+Platform limitations describe that deployment and date, not all A2A implementations.
+Sprint 2 items are unimplemented or unverified.
 After the setup in §6, reproduce with:
 
 ```powershell
@@ -30,82 +28,48 @@ After the setup in §6, reproduce with:
 | R1 | **Supervisor agent** | ✅ Achieved | `supervisor-agent` deployed as a hosted agent; delegated the tested research and analysis requests |
 | R2 | **Research agent** | ✅ Achieved | `research-agent` deployed as a hosted agent; produces briefs using supplied content and model knowledge; no live web search is configured |
 | R3 | **Data analysis agent** | ✅ Achieved | CSV analysis plus Python-computed grouped totals and cross-sheet comparisons from a supplied Excel workbook |
-| R4 | **A2A communication** | ✅ Achieved | Live `message/send` → A2A **Task** → `tasks/get` → `completed` with artifacts |
-| R5 | **…via agent card** | ✅ Achieved | No peer is configured. Each turn, the supervisor lists the project's agents, reads each card at `…/endpoint/protocols/a2a/agentCard/v1.0`, and its model picks peers by the cards' skills. A2A calls use the JSONRPC URL from the card's `supportedInterfaces` |
+| R4 | **A2A communication** | ✅ Achieved | A blocking `message/send` to each **prompt front-end** returned a completed Task with a text artifact |
+| R5 | **…via agent card** | ✅ Achieved | Runtime project listing and card discovery; model selection by skills; A2A endpoint read from the card (§3) |
 | R6 | **Via the Responses API** | ✅ Achieved | All three hosted agents serve the Responses protocol; the supervisor is driven entirely through it |
-| R7 | **Text part** | ✅ Achieved | Arrives as `received_as: text` |
-| R8 | **Data part** | 🟡 Partial | Over the Responses API, `application/json` arrives as `received_as: data`, media type and JSON structure intact. Direct A2A calls reject data parts (`-32005 Incompatible content types`, §5.1) |
-| R9 | **File part** | 🟡 Partial | Over the Responses API: CSV content grounding plus `.xlsx` byte/SHA256 delivery and correct multi-sheet tool results through the supervisor. Direct A2A calls reject file parts (`-32005`, §5.1) |
+| R7 | **Text part** | ✅ Achieved | A2A text artifacts and Responses `received_as: text` evidence |
+| R8 | **Data part** | 🟡 Partial | JSON sent as Responses `input_file` arrives as application `data` content with its structure intact. Native A2A data parts are rejected (`-32005`, §5.1) |
+| R9 | **File part** | 🟡 Partial | Responses delivers CSV content and unchanged `.xlsx` bytes with correct multi-sheet results. Native A2A file parts are rejected (`-32005`, §5.1) |
 | — | *Hosted agent as an A2A **target*** | ❌ **Blocked by platform** | `-32099 HostedAgentNotSupported` — see §5 |
 
-**Seven of the nine requirements are fully met. R8 and R9 are partial:** data and file
-parts are delivered over the Responses API, but direct A2A calls reject them, so multipart
-A2A is not proven. Two limits come from Foundry itself: A2A rejects data and file parts
-(§5.1), and hosted agents refuse inbound A2A (§5.2). Both are documented, asserted in the
-harness, and have a migration path the day the platform lifts them.
+**R1–R7 achieved; R8/R9 partial.** The harness asserts both successful delivery and the
+expected platform rejections. A passing rejection check does **not** mean the capability
+is supported.
 
-Latest run — **33/33 live checks PASS** (16 transport checks + 17 Excel checks),
-plus **123/123 offline regression tests**:
+### Recorded verification
 
-```
-PASS Agent cards published for every agent
-PASS A2A: text part delivered, task ran to completion
-PASS A2A: data part rejected by the platform (documented limit)
-PASS A2A: file part rejected by the platform (documented limit)
-PASS A2A: hosted agents refused as targets (documented limit)
-PASS Responses: every specialist call completed
-PASS Responses: deterministic evidence block present
-PASS Responses: TEXT part delivered
-PASS Responses: DATA part delivered
-PASS Responses: FILE part delivered
-PASS Responses: payload values reached the model
-PASS Supervisor answered over Responses API
-PASS Supervisor emitted a hop log
-PASS Supervisor discovered its peers from agent cards
-PASS Supervisor delegated to both specialists
-PASS Supervisor forwarded data + file parts onward
-PASS Excel delivery and computed results
-```
+Deployed versions in the recorded run: supervisor **5**, research **3**, analysis **4**;
+both prompt front-ends **1**.
 
-All three hosted agents were active: supervisor version **5**, research version **3**,
-analysis version **4**; both prompt front-ends remain version **1**. The supervisor
-discovered all four peers with its own managed identity and excluded itself. Manual
-checks also verified:
-- text delegation to the hosted specialists: A2A was refused (`-32099`), then Responses
-  was used;
-- both supervisor-to-prompt A2A hops;
-- the native multipart probe;
-- the card catalog listing;
-- **4% of 50,000 = 2,000**.
+| Check group | Result | Evidence |
+|---|---|---|
+| Cards and direct transport checks | 11/11 | Five published cards, completed prompt-agent A2A Tasks, expected rejections, hosted JSON/CSV receipts and sample-answer checks |
+| Supervisor transport checks | 5/5 | Four peers discovered using its managed identity, self excluded, JSON and CSV received by both hosted specialists |
+| Direct Excel analysis | 8/8 | Workbook byte length/SHA256, `Sales` and `Targets`, all four tools and exact expected results |
+| Excel through the supervisor | 9/9 | The same checks plus successful forwarding to analysis |
+| Offline regression tests | 123/123 on Python 3.13.15 and 3.14.3 | Transport, discovery, workbook parsing/calculation and proof-validation tests |
 
-These are transport/functional checks, not a general model-quality evaluation.
+Total: **33/33 live checks**. The final verdict groups the 17 Excel checks into one row.
+Excel totals were **176,500 actual / 180,000 target / -3,500 difference / 98.0556%
+attainment**. The workbook-upload command and the four manual scenarios in §6 also passed.
 
-Excel verification passed **8/8 direct-analysis** and **9/9 supervisor-path** checks.
-Both paths received identical workbook bytes, discovered `Sales` and `Targets`, invoked
-all four Excel tools, and produced **176,500 actual / 180,000 target / -3,500 difference /
-98.0556% attainment**. The standalone workbook-upload command was also verified live.
+Earlier, on supervisor/analysis **v4**, a messy-workbook run verified formatting-only
+cells, a chart sheet, a saved-empty formula result and a totals-row warning; research ran
+with the workbook withheld. Totals rows remain included, not automatically deduplicated.
 
-A peer review reproduced and fixed 11 Excel defects (false errors on normal Excel files,
-a crash on corrupt archives, a concurrency bug, silent totals-row double counting, a
-grouped-result failure, and research being blocked when a workbook was attached).
-After redeploying version 4, a deliberately messy workbook sent through the supervisor
-was analysed correctly: formatting beyond the table, a chart sheet, a formula saved as ""
-and a `Total` row. The answer kept every warning, and research still ran on the same
-turn without receiving the workbook.
-
-Card-based routing replaced the supervisor's fixed peer names and tool-to-agent mapping
-(version 5; see §3). Local runs against the live peers found two routing issues, both
-fixed before deployment:
-- When the catalog showed a hosted agent as "refused" over A2A, the model sent a research
-  sub-task with attachments to a text-only front-end.
-- The model once answered a part-support question without running the probe.
+These are fixture-based functional checks, not a general model-quality evaluation or a
+guarantee that every future request selects the right tool.
 
 ---
 
 ## 2. Architecture
 
 ```
-                         Responses API  (input_text · input_file · input_image)
+                         Responses API  (input_text · input_file)
                                     │
                                     ▼
                     ┌───────────────────────────────┐
@@ -117,8 +81,8 @@ fixed before deployment:
              ┌──────────────────────┴───────────────────────┐
              │                                              │
    Responses protocol                              A2A / JSON-RPC
-   text + data + file                              text only, async Task
-   (the working payload path)                      (the agent-card path)
+   text + data + file                              text only, Task result
+   hosted-agent payload delivery                  prompt-agent invocation
              │                                              │
              ▼                                              ▼
  ┌────────────────────┐ ┌────────────────────┐   ┌────────────────────────┐
@@ -135,54 +99,26 @@ fixed before deployment:
 
 ### Why two transports
 
-This is the central design decision, and it is forced by the platform rather than chosen.
+Agent-card discovery is used **before either transport**. The tested paths differ:
 
-Foundry today gives you **agent-card discovery + A2A invocation** on one side, and
-**multi-part payloads** on the other — but not both on the same path:
-
-| | A2A (JSON-RPC) | Responses protocol |
+| | Foundry A2A (JSON-RPC) | Responses protocol |
 |---|---|---|
-| Discovery via agent card | ✅ the card lists the JSONRPC URL | ✖ the card lists only A2A interfaces; the supervisor calls the per-agent Responses endpoint of an agent it discovered from its card |
-| Hosted agent as inbound A2A target | ❌ `-32099` | ✅ |
+| Invocation URL | JSONRPC interface from the card | Per-agent Responses URL built from the project endpoint and discovered name |
+| Hosted agent as target | ❌ `-32099` | ✅ |
 | Text part | ✅ | ✅ |
-| Data part | ❌ `-32005` | ✅ |
-| File part | ❌ `-32005` | ✅ |
-| Execution model | async **Task** (submit → poll) | request/response |
+| Structured data | ❌ Native `DataPart` rejected (`-32005`) | ✅ JSON via `input_file` |
+| File | ❌ Native `FilePart` rejected (`-32005`) | ✅ CSV and `.xlsx` via `input_file` |
+| Client behaviour | Blocking `message/send`; polls `tasks/get` only if a Task is still pending | Send with `stream: false`; require `status: completed` |
 
-A2A message file part returns:
-```
-{
-  "code": -32005,
-  "message": "Incompatible content types",
-  "data": {
-    "contentType": "file"
-  }
-}
-```
-The rejection happens at the platform gateway, before the receiving agent can process the file.
-
-So Sprint 1 uses each transport for what it can actually do:
-
-- **A2A** proves R4/R5 — real `message/send` (text-only calls) against prompt-agent front-ends, discovered
-  through their published cards, following the full Task lifecycle.
-- **Responses** proves R6 and R7 and delivers R8/R9's data and file parts — hosted specialist
-  to hosted specialist, carrying text, data and file parts (file/data-bearing calls), which is
-  where the real work happens. A2A cannot carry those parts, which is why R8 and R9 are partial.
-
-The supervisor speaks **both**, and labels every delegation with the transport it used.
-It does not decide per peer in code. Text goes first over A2A, to the interface on the
-peer's card. When Foundry refuses a hosted target (`-32099 HostedAgentNotSupported`), the
-supervisor falls back to Responses and remembers the refusal for the rest of the process.
-Attachments always use Responses.
+These tests do not establish image delivery, arbitrary file support, or multipart
+Responses support on the prompt front-ends.
 
 ### Convergence path
 
-The specialists already publish agent cards and [`a2a_client.py`](src/supervisor-agent/a2a_client.py)
-already implements the Task lifecycle used here. The supervisor already tries A2A first, so
-if Foundry enables inbound A2A on hosted targets, text delegation to them should move to A2A
-without a routing change. Retest that before retiring the prompt front-ends. Multipart A2A
-support is a separate gate: attachments stay on Responses until it is retested and the
-forwarding code is changed.
+If Foundry enables inbound A2A on hosted targets, retest with a fresh supervisor process
+so cached refusals do not hide the change. Auto text routing already tries A2A first.
+Retire the prompt front-ends only after that succeeds. Multipart A2A needs separate
+verification and forwarding changes; its builders alone are not an implemented file path.
 
 ---
 
@@ -192,107 +128,109 @@ forwarding code is changed.
 
 | Component | Kind | Responsibility |
 |---|---|---|
-| `supervisor-agent` | hosted | Discovers peers from the project's A2A agent cards, decomposes work, picks agents by card skills, forwards attachments only to agents whose cards accept them, merges answers and emits the hop log. Instructions delegate substantive research/analysis; routing is model-driven, and no peer names are configured. |
+| `supervisor-agent` | hosted | Discovers peers, asks its model to select by skills, forwards eligible attachments and emits a hop log |
 | `research-agent` | hosted | Research brief: summary, key facts, assumptions, open questions. Sources must come from supplied material or be qualified; no browsing tool is configured. |
 | `analysis-agent` | hosted | Quantitative analysis and explicit Python tools for bounded `.xlsx` tables. Large-file / long-running execution and Code Interpreter remain Sprint 2. |
-| `research-agent-a2a` | prompt | A2A front-end for research. Exists only because A2A refuses hosted targets. |
+| `research-agent-a2a` | prompt | A2A front-end for research. Exists because Foundry refused hosted A2A targets (§5.2). |
 | `analysis-agent-a2a` | prompt | A2A front-end for analysis. Same reason. |
 
 The prompt front-ends are independent model agents with similar personas, not proxies
-that call the hosted specialists.
+that call the hosted specialists. Re-running their deployment script creates new versions.
 
 ### Supervisor tools
 
-The model chooses *who* and *what to ask* from the card catalog; the harness owns *how it
-travels*.
+The model selects peers and questions from the catalog; Python applies the requested
+transport and attachment policy.
 
 | Tool | Transport | Notes |
 |---|---|---|
-| `ask_agent(agent, question, transport)` | auto / A2A / Responses | `auto`: text goes over A2A to the card's JSONRPC interface. A `HostedAgentNotSupported` refusal falls back to Responses and is remembered for the process. Attachments always use Responses and reach only agents whose card accepts them. An explicit `a2a` never falls back and reports any attachment it left behind. Unknown names are rejected with the list of discovered agents. |
-| `list_agents` | — | Re-reads the project listing and every card. Returns each agent's kind, skills, accepted attachments and what its A2A endpoint did so far |
-| `probe_part_support(a2a_agent, responses_agent)` | both | Sends the same text+data+file payload to two discovered agents, one per transport, and reports what each accepted. Required for part-support questions: asking an agent is not evidence |
+| `ask_agent(agent, question, transport="auto")` | auto / A2A / Responses | Delegates to a discovered name using the policy below; rejects unknown peers |
+| `list_agents()` | — | Refreshes the catalog; returns kinds, skills, attachment eligibility and learned A2A status |
+| `probe_part_support(a2a_agent, responses_agent)` | both | Sends **synthetic** JSON and CSV via native A2A parts and Responses files. It tests rejection/delivery, not the caller's uploads |
 
-Attachments are not copied into model-generated tool arguments. They remain available
-to the receiving agent/model. Middleware captures them once per
-turn into a `ContextVar`, projects them into **both** dialects (A2A `FilePart`/`DataPart` and
-Responses `input_file`/`input_image`), and the tools forward the right projection.
-For Excel specifically, middleware keeps the binary workbook in application state and
-replaces it with metadata before either agent calls the model. The model receives tool
-results, not raw workbook bytes.
+For `ask_agent`:
+1. `auto` with eligible attachments uses Responses. Otherwise it tries A2A.
+2. An A2A `HostedAgentNotSupported` refusal triggers Responses fallback. Later `auto`
+   calls to that peer skip A2A for the process lifetime. Other errors do not trigger fallback.
+3. Explicit `a2a` sends text only, records withheld attachments and never falls back.
+   Explicit `responses` bypasses A2A but still filters attachments.
+
+The model is instructed to use the probe for part-support questions and not to inline
+attachments into questions; those are prompting rules, not deterministic tool selection.
+Python forwards captured attachments. Only `.xlsx` is restricted to the latest user
+message; other attachments present in supplied conversation history may be forwarded again.
+Workbook bytes stay in application state and are replaced by metadata before model calls.
 
 ### Card-based routing
 
-No peer name, URL or tool-to-agent mapping exists in the supervisor's code or
-configuration. [agent_directory.py](src/supervisor-agent/agent_directory.py) builds the
-catalog:
+No per-peer names or URLs are configured in the supervisor.
+[agent_directory.py](src/supervisor-agent/agent_directory.py) builds its catalog:
 
 1. `GET {project}/agents?api-version=v1`, paged with `after=<last_id>`, lists the
    project's agents with their kind (`hosted` / `prompt`).
 2. For every agent except the supervisor itself (the platform-provided
    `FOUNDRY_AGENT_NAME`), it fetches `…/endpoint/protocols/a2a/agentCard/v1.0`.
-   An agent without a card has not enabled A2A; it is skipped with a logged warning.
+   Unavailable cards are skipped with a logged warning, including HTTP/authentication
+   failures; a missing peer does not necessarily mean A2A is disabled.
 3. Each turn, middleware gives the model a compact catalog: name, kind, card description,
-   skills with tags and examples, and accepted attachments. The hop log's `discovery`
-   block records the source, each agent's kind, card URL and skill ids, plus any
-   discovery failure.
+   skills with tags and examples, and attachment eligibility. The hop log records this
+   initial discovery snapshot, or the error if the agent listing fails.
 4. Discovery is cached for 5 minutes. An unknown name or `list_agents` forces a refresh,
-   so editing a card changes routing without redeploying the supervisor.
+   making new or edited cards available without a supervisor redeploy. Card refresh does
+   not clear learned A2A refusals.
 
-**Attachment capability convention.** Foundry cards always advertise
-`defaultInputModes: ["text"]`, and `azure.yaml` cannot declare input MIME types. A card
-therefore declares what it accepts through skill tags: `file` for general files, and
-`excel` for `.xlsx` workbooks. The supervisor forwards an attachment only to an agent
-whose card carries the matching tag. When several agents have the skill a sub-task needs,
-the instructions prefer the one whose card accepts the caller's attachments.
+The host supplies `FOUNDRY_AGENT_NAME` for self-exclusion. For direct local Python runs,
+set it as shown in [`.env.example`](src/supervisor-agent/.env.example).
+The model's per-turn catalog omits learned A2A status to avoid treating a refused A2A
+endpoint as an unreachable agent; `list_agents` reports the distinction explicitly.
 
-**Transport status stays out of the routing catalog.** A hosted agent that refused A2A is
-still reachable over Responses. When a bare "refused" appeared in the catalog, the model
-steered around that agent. `list_agents` still reports the status, worded as
-"ask_agent reaches this agent over Responses instead".
+**Attachment convention:** the tested cards advertise only text input modes, and the
+`agentCard` block in `azure.yaml` has no input-mode field. This POC therefore uses skill
+tags for Responses forwarding: `excel` for workbooks and `file` for other captured
+attachments. Tags make a **selected** peer eligible; they neither broadcast uploads nor
+prove that it can process a format. The model is instructed to prefer an eligible peer
+with matching skills.
 
-**Governance.** Every agent in the project that publishes a card becomes callable by the
-supervisor. If its card is tagged `file` or `excel`, it also receives the caller's
-attachments. Anyone who can create or edit agents in this project can therefore change
-routing. Project membership is the trust boundary for this POC; an allow-list or
-owner-based trust is Sprint 2 work.
-
-**Cost.** The first text call to each hosted agent in a supervisor process costs one
-refused A2A round trip. The routing catalog (2,770 characters, roughly 700 tokens, for
-the four current agents) is added to every supervisor model call.
+**Trust and cost:** all readable peer cards are eligible for selection. There is no
+owner allow-list, and self-declared tags are not authorization. Keep project agent
+publishers trusted. The routing catalog adds about 2,800 characters (four agents) to every
+supervisor model call. Learning a hosted refusal costs one A2A round trip before fallback.
 
 ### Excel analysis (without Code Interpreter)
 
 ```
 caller uploads .xlsx
-  -> supervisor forwards unchanged input_file over Responses
+  -> supervisor forwards the workbook bytes unchanged over Responses
   -> analysis reads the workbook with openpyxl and computes with explicit Python tools
   -> model explains those computed results
 ```
 
 | Analysis tool | Operation |
 |---|---|
-| `inspect_excel_workbook` | Discover all sheets, dimensions, first-row headers and formula-cache warnings |
-| `read_excel_rows` | Read an explicit page of up to 20 data rows; report total rows and whether more remain |
+| `inspect_excel_workbook` | List worksheets, dimensions, first-row headers and warnings; chart sheets are skipped |
+| `read_excel_rows` | Read up to 20 nonempty data rows; offsets exclude the header and completely empty rows |
 | `aggregate_excel` | Sum, average, min, max or nonblank count over a named column, optionally grouped by another column |
 | `compare_excel_sheets` | Sum actuals/targets by a common key across two sheets; compute differences, attainment and totals |
 
-Numeric operations run in Python, not by asking the model to calculate from a preview.
-Duplicate keys are summed; mismatched key sets and invalid numeric values fail explicitly.
-Blank numeric cells are excluded; aggregates report their excluded counts. In grouped
-results, a group with no numeric values is `null` with a warning, while the other groups
-are still computed; ungrouped results and comparisons without numbers fail explicitly
-rather than reporting 0. A zero target has null attainment plus a warning.
-Rows labelled like totals (`Total`, `Grand Total`, `EMEA Total`, `Subtotal`) stay in
-calculations but are named in a warning, because they may double-count detail rows.
-Source values, tool arguments, results and errors remain visible in the evidence.
+Calculations run in Python. Comparisons sum duplicate keys and reject mismatched key sets.
+Numeric operations reject nonnumeric values and skip blanks; aggregates report blank counts.
+An all-blank group returns `null` with a warning for numeric grouped aggregates;
+ungrouped numeric aggregates and comparisons fail when a group has no numeric values.
+`count` counts nonblank values and can return zero. Zero targets have null attainment
+with a warning.
+
+Rows with detected totals-like labels remain included and generate a possible-double-counting
+warning; the code does not deduplicate them. Evidence records tool arguments, returned
+rows/results and errors, not a complete dump of every source cell.
 
 **Sprint 1 contract**
 
 - One inline `.xlsx` workbook per user turn, using `input_file` and base64 `file_data`.
   Reattach it on later turns; old workbook attachments are not silently reused.
-- Limits: **5 MiB uploaded bytes**, **20 sheets**, **100,000 cells** across all sheets'
-  used ranges (A1 to the last cell holding a value or formula), plus **20 MiB
-  ZIP-expanded bytes**, **512 archive members** and **1,000 result groups**.
+- Limits: **5 MiB uploaded bytes**, **20 sheets** (including chart sheets),
+  **100,000 cells** across worksheet used-range grids (A1 through the last content row
+  and column), plus **20 MiB ZIP-expanded bytes**, **512 archive members** and
+  **1,000 result groups**.
   Formatting-only cells, merged ranges and dimension hints do not count or create
   columns. Oversized inputs fail rather than being silently truncated.
 - Table operations require unique, nonempty text headers in the first row.
@@ -309,41 +247,19 @@ Source values, tool arguments, results and errors remain visible in the evidence
 
 ### The evidence layer
 
-A POC where the model *claims* the file arrived proves nothing. Machine-readable blocks
-are generated by middleware from the actual objects on the wire:
+Application-generated JSON blocks describe what the code observed:
 
-**`A2A-PART-INVENTORY`** — emitted by each specialist, describing what it received:
+| Marker | Producer | Contents |
+|---|---|---|
+| `A2A-PART-INVENTORY` | Hosted research/analysis middleware | Content types after host conversion, sizes, filenames where available and bounded previews |
+| `A2A-HOP-LOG` | Supervisor | Initial discovery snapshot and hops; transport-specific receipts, task IDs, errors, fallback and withheld attachments where applicable |
+| `EXCEL-ANALYSIS` | Analysis application | Workbook length/SHA256, worksheet dimensions, tool arguments/results and errors; copied into the supervisor hop as `excel_analysis` |
 
-```json
-{ "marker": "A2A-PART-INVENTORY",
-  "parts": [
-    { "received_as": "text", "chars": 153, "preview": "Part-support probe. Using the attached…" },
-    { "received_as": "data", "media_type": "application/json", "bytes": 143,
-      "filename": "targets.json", "preview": "{\"quarter\": \"FY26Q1\", \"targets\": {…}}" },
-    { "received_as": "text", "chars": 111, "preview": "[File: regional-sales.csv]\nregion,units,revenue\nEMEA,1200,48000…" }
-  ] }
-```
-
-**`A2A-HOP-LOG`** — emitted by the supervisor. Its `discovery` block records where peers
-came from: the listing source, each discovered agent's kind, card URL and skill ids, or
-the discovery error. It then has one entry per delegation: peer, transport, URL, card URL,
-content/part kinds sent and received, task id, any protocol error code, the Responses
-`fallback` after an A2A refusal, and any `withheld_attachments`.
-
-**`EXCEL-ANALYSIS`** — emitted by the analysis application: workbook byte length and SHA256,
-all sheet dimensions, each Excel tool's arguments/results, and explicit failures. The
-supervisor copies this evidence into its analysis hop as `excel_analysis`.
-
-The harness selects the final marked evidence blocks, checks the actual sample JSON and CSV,
-and checks model grounding separately after removing diagnostics. HTTP success alone,
-arbitrary protocol errors, and evidence echoes do not count as successful delivery.
-This is functional evidence, not tamper-proof attestation for untrusted inputs.
-
-> **Implementation note.** The Foundry host always invokes agents with `stream=True`, so
-> mutating the aggregated `AgentResponse` — or using `stream_result_hooks` — never reaches the
-> client. The evidence is injected by expanding the terminal stream update into
-> `[evidence, update]` via `ResponseStream.flat_map`. This cost real debugging time; see
-> `with_received_parts_evidence` in [a2a_parts.py](src/_shared/a2a_parts.py).
+The proof checks the final marked blocks and removes them before checking sample numbers
+in model prose. It does not grade every statement or establish tamper-proof provenance.
+The host invokes agents with `stream=True`, so evidence is appended to the terminal stream
+update via `ResponseStream.flat_map` ([a2a_parts.py](src/_shared/a2a_parts.py)); mutating
+the aggregated response would never reach the client.
 
 ### Request flow
 
@@ -374,7 +290,7 @@ caller ──input_text + input_file(json) + input_file(csv)──► supervisor
 ├── azure.yaml                    3 hosted agent services + ai-project; protocols,
 │                                 agentEndpoint and agentCard per agent
 ├── infra/main.bicep              Foundry account, project, model, Log Analytics,
-│                                 App Insights, RBAC — fully idempotent
+│                                 App Insights, RBAC — deterministic names
 ├── scripts/
 │   ├── deploy-infra.ps1          Provision infra; also grants agent identities RBAC
 │   ├── deploy_a2a_frontends.py   Create/patch the two prompt A2A front-ends
@@ -401,17 +317,17 @@ caller ──input_text + input_file(json) + input_file(csv)──► supervisor
 
 Each agent directory is a self-contained build context (Foundry packages it independently),
 so `src/_shared` is the single source of truth and `sync-shared.ps1` fans it out.
-`sync-shared.ps1 -Check` and `lock-agents.ps1 -Check` fail the build on drift.
+`sync-shared.ps1 -Check` and `lock-agents.ps1 -Check` fail when copies or locks are stale.
+No CI is configured, so run them explicitly.
 
 ---
 
 ## 5. What was **not** achieved, and why
 
-Both gaps are platform limitations with reproducible error codes. The first (§5.1) is why
-R8 and R9 are only partially achieved; the second (§5.2) was an attempt to go further than
-the requirements.
+The tested Foundry gateway returned the errors below. These are deployment observations,
+not restrictions of the A2A part model itself.
 
-### 5.1 A2A cannot carry data or file parts
+### 5.1 Foundry rejected A2A data and file parts
 
 ```
 POST …/agents/research-agent-a2a/endpoint/protocols/a2a?api-version=v1
@@ -426,14 +342,11 @@ POST …/agents/research-agent-a2a/endpoint/protocols/a2a?api-version=v1
 Identical result with `{"kind":"file"}` (`contentType: "file"`). Consistent with every agent
 card advertising `defaultInputModes: ["text"]`.
 
-**Impact:** R8 and R9 are partial: data and file parts reach the agents only over the
-Responses transport. Text (R7) works over both.
-**Workaround:** `ask_agent` over A2A reports what it had to leave behind rather than dropping
-it silently, and attachments go over Responses to agents whose cards accept them. The A2A
-`FilePart`/`DataPart` builders are written and unit-tested, ready for the day the gate
-accepts them.
+R8/R9 therefore remain partial. `ask_agent` uses Responses for eligible attachments;
+explicit A2A calls withhold them. The diagnostic probe intentionally sends synthetic
+non-text parts to reproduce the rejection. The proof also tests data and file separately.
 
-### 5.2 Hosted agents cannot be A2A *targets*
+### 5.2 Foundry refused hosted agents as A2A *targets*
 
 ```
 POST …/agents/research-agent/endpoint/protocols/a2a?api-version=v1
@@ -444,34 +357,25 @@ POST …/agents/research-agent/endpoint/protocols/a2a?api-version=v1
                      Use a prompt agent as the A2A target."}}}
 ```
 
-Note the asymmetry: a hosted agent publishes a perfectly valid card and can make **outbound**
-A2A calls — `azure-ai-agentserver-core` even documents forwarding `x-agent-foundry-call-id` /
-`x-agent-user-id` on outbound calls to *"Storage, Toolboxes/MCP proxy, A2A"*. Only the
-**inbound** gate is missing.
+Publishing a card and making **outbound** A2A calls did not imply inbound support: the
+supervisor's calls to the prompt front-ends passed, while Foundry rejected inbound calls to
+both hosted specialists. Auto routing falls back to Responses on this refusal.
 
-**Impact:** a real A2A hop needs a prompt agent on the receiving end, hence the two front-ends.
-The supervisor learns this at runtime: its first A2A call to each hosted agent is refused
-with this error, and it falls back to Responses for the rest of the process.
-**Workaround:** front-ends mirror their hosted counterparts' persona and are provisioned by one
-repeatable script. Re-running it intentionally creates new versions under the same names.
-Retire them only after revalidating platform support.
-
-### 5.3 Behaviours worth knowing (not failures)
+### 5.3 Other measured behaviour
 
 | Behaviour | Consequence |
 |---|---|
 | The tested `text/csv` attachment is **flattened into text**, prefixed `[File: <name>]` | A supervisor looking only for file objects would drop it. `_unflatten_file` in [turn_state.py](src/supervisor-agent/turn_state.py) reconstructs it so the payload survives the extra hop. The tested `application/json` remains distinct data; image delivery was not part of this verification. |
-| A2A is an **async Task** model, not request/response | `message/send` returns `state: submitted`; you must poll `tasks/get`. Already implemented — and it is the natural hook for Sprint 2's long-running work. |
+| Blocking A2A calls returned completed Tasks | In the saved supervisor logs, every prompt-agent call finished in one `message/send` request. The `tasks/get` polling path for pending Tasks is covered only by an offline test. |
 | Hosted agents reject the project-level `/responses` route | `bad_request: "Hosted agents can only be called through the agent endpoint"`. Use `…/agents/<name>/endpoint/protocols/openai/responses?api-version=v1`. |
-| The project agent listing (`GET /agents`) contains no agent cards | Discovery makes one card request per agent, concurrently, and caches the result for 5 minutes. Every card also advertises only `text` input, so attachment support is read from skill tags. |
+| The project agent listing contained no cards | Discovery fetches cards separately and caches them for 5 minutes; a card's availability is not a health check. |
 | Deleting an agent with live sessions returns **409** | Append `&force=true` to cascade-delete its sessions. |
 
 ### 5.4 Explicitly out of scope for Sprint 1
 
-Code Interpreter, arbitrary code/process execution, long-running execution,
-large files (3K × 300 / ~75 MB), state
-save/restore, conversation isolation, concurrency/SKU/cold-start measurements, BCDR and
-geo constraints. See §8.
+Code Interpreter, arbitrary code/process execution, long-running execution, large files
+(3K × 300 / ~75 MB), state save/restore, conversation isolation, concurrency/SKU/cold-start
+measurements, BCDR and geo constraints. See §8.
 
 ---
 
@@ -479,9 +383,10 @@ geo constraints. See §8.
 
 ### Prerequisites
 
-`azd >= 1.27.1` with the `azure.ai.agents` extension, Azure CLI, and an authenticated
-session (`az login`, `azd auth login`). Python 3.13+ and `uv` on PATH. The verification
-used azd 1.34.2, local Python 3.14.3, and hosted runtime `python_3_13`.
+`azd >= 1.27.1` with `azure.ai.agents >= 1.0.0-beta.9`, Azure CLI, and authenticated
+sessions (`az login`, `azd auth login`). Python 3.13+ and `uv` on PATH. The verification
+used azd 1.34.2 and hosted runtime `python_3_13`. The proofs ran on local Python 3.13.15
+(the environment below), and the tests ran on both 3.13.15 and 3.14.3.
 The subscription needs model quota and permission to deploy resources and assign roles.
 
 From the repository root, install the script/test dependencies from the analysis agent's
@@ -499,18 +404,14 @@ $subscriptionId = '<your-subscription-id>'
 .\scripts\deploy-infra.ps1 -ResourceGroupName rg-foundry-hostedagents -SubscriptionId $subscriptionId
 ```
 
-Idempotent: deterministic names, `guid()`-named role assignments, re-runs update in place.
-Writes non-secret outputs to `infra/outputs.env`, consumed by the Python scripts, and
-imports those outputs into azd. By default it creates/selects `project-a2a-poc-dev`,
-sets the project endpoint and enables deployment into that existing project.
-Use `-AzdEnvironmentName <name>` to override the environment label.
-Use `-WhatIf` to preview an existing resource group without changing it.
-Restoring a soft-deleted account requires explicit `-RestoreSoftDeletedAccount`.
-Keep the same subscription, naming parameters and agent identities on subsequent runs.
-
-The renamed deployment was successfully reapplied. Its post-deployment what-if had no
-resource creates/deletes, but was not an empty diff: Azure returned service-populated
-properties and App Insights connection `isSharedToAll` normalization.
+Idempotent (deterministic names, `guid()`-named role assignments): a re-run on the existing
+deployment created and deleted nothing, though what-if still reports service-populated
+property diffs. The script writes non-secret outputs to `infra/outputs.env` for the Python
+scripts and imports them into azd, creating or selecting `project-a2a-poc-dev` (override
+with `-AzdEnvironmentName`) and pointing it at the existing project. `-WhatIf` previews an
+existing resource group; restoring a soft-deleted account requires
+`-RestoreSoftDeletedAccount`. Keep the same subscription, naming parameters and agent
+identities on later runs.
 
 ### Step 2 — agents
 
@@ -523,9 +424,10 @@ azd deploy                                  # supervisor, research, analysis
 
 ### Step 3 — grant the agents access to each other
 
-Hosted agents call peers with their **own** managed identity, so each needs **Foundry User**
-and **Foundry Agent Consumer** on the project. The supervisor also uses its identity to
-list the project's agents and read their cards for discovery:
+This template grants every hosted agent **Foundry User** and **Foundry Agent Consumer**
+on the project. The supervisor uses its identity for listing, card reads and peer calls;
+the specialists use theirs for model inference. These grants worked in the recorded run;
+the tests do not establish that both roles are necessary for every agent.
 
 ```powershell
 $values = azd env get-values --output json | ConvertFrom-Json
@@ -552,36 +454,38 @@ agent gets a new identity.
 & $python -m unittest discover -s tests -v          # 123 offline regression tests
 .\scripts\sync-shared.ps1 -Check
 .\scripts\lock-agents.ps1 -Check
-& $python .\scripts\prove_a2a_parts.py                    # 4 sections, 16 assertions
-& $python .\scripts\prove_a2a_parts.py --skip-supervisor  # transport checks only
-& $python .\scripts\prove_excel.py                  # workbook proof only
-& $python .\scripts\prove_a2a_parts.py --excel        # original proof plus workbook proof
+& $python .\scripts\prove_a2a_parts.py --excel       # full live proof: 16 + 8 + 9 checks
+
+# Optional subsets (each makes live calls)
+& $python .\scripts\prove_a2a_parts.py               # transport proof: 16 verdicts
+& $python .\scripts\prove_a2a_parts.py --skip-supervisor
+& $python .\scripts\prove_excel.py                  # workbook proof: 8 + 9 checks
 ```
 
-The Excel proof creates an in-memory workbook with `Sales` and `Targets` sheets.
-It checks exact byte length and SHA256, both sheets' dimensions, real inspect/read/
-aggregate/compare tool calls, and exact regional/overall results on both the direct
-analysis path and supervisor delegation. Expected totals are **176,500 actual** versus
-**180,000 target**, a **3,500 shortfall**. Those answers are not given in the prompt.
-Diagnostics are removed before checking that the model explains the computed totals.
-The offline suite additionally covers formula caches (zero, missing and saved-empty
-results), formatting-only cells, chart sheets, printer-settings parts, totals rows,
-all-blank groups, corrupt/unsupported ZIP structures, oversized workbooks, multiple-sheet
-limits, decimal arithmetic, bad headers/keys, explicit tool failures, concurrent parses
-and turn state, research routing with workbooks, and streamed evidence. For card routing
-it covers:
-- discovery with self-exclusion and card-less agents;
-- listing pagination and errors;
-- refresh after card edits and TTL expiry;
-- unknown-agent rejection;
-- A2A-first with a remembered hosted refusal, and explicit A2A without fallback;
-- tag-based attachment eligibility;
-- a routing catalog that leaks no transport status or card URLs;
-- discovery-failure reporting;
-- a source check that no peer names or mapping constants remain in the supervisor.
+The Excel proof builds an in-memory workbook with `Sales` and `Targets` sheets. On both the
+direct and supervisor paths it checks:
+- exact bytes and SHA256, and both sheets' dimensions;
+- real inspect/read/aggregate/compare tool calls;
+- exact results: **176,500 actual / 180,000 target / 3,500 shortfall**, which the prompt does
+  not give.
 
-The supervisor proof also requires that its peers came from card discovery, that the
-supervisor excluded itself, and that every hop targeted a discovered agent.
+Prose checks look for the expected totals and shortfall after removing diagnostics; they
+do not assess all reasoning or citations. The supervisor proof requires the four expected
+peers in discovery, self-exclusion and discovered targets for every hop.
+
+The supervisor has no configured peer map, but the proof fixtures and front-end deployment
+script intentionally use this POC's agent names. Update those if renaming agents.
+
+The offline suite also covers:
+- **Excel:** formula caches (zero, missing, saved-empty), formatting-only cells, chart sheets,
+  printer-settings parts, totals rows, all-blank groups, corrupt ZIPs, size/sheet/cell
+  limits, decimal arithmetic, bad headers/keys, tool failures, local concurrency, withholding
+  workbooks from research, and streamed evidence.
+- **Card routing:** discovery with self-exclusion and card-less agents, paging and listing
+  errors, refresh on card edits and TTL, unknown-agent rejection, A2A-first with a
+  remembered refusal (explicit A2A never falls back), tag-based attachments, a catalog free
+  of transport status and card URLs, discovery-failure reporting, and a check that no peer
+  names remain in the supervisor.
 
 ### Upload your own workbook
 
@@ -590,10 +494,11 @@ supervisor excluded itself, and that every hop targeted a discovered agent.
   "Inspect the sheets, sum revenue on Sales by region, and compare Sales revenue with Targets target using region as the key."
 ```
 
-This reads your local file and sends it to the configured Foundry supervisor; it does not
-create a new storage account or enable Code Interpreter. The command reports failure if
-no Responses delegation returns Excel analysis evidence (the supervisor chooses the agent
-from the cards) or the recorded Excel tool execution fails.
+This sends the workbook to the project in `infra/outputs.env`; it creates no storage
+account or Code Interpreter. Success requires a completed Responses delegation, matching
+filename/length/SHA256, no upload errors and **at least one successful Excel tool call**.
+Other failed tool attempts are printed as warnings. Exit 0 does **not** verify that every
+requested calculation was performed or correct; the fixed workbook proof checks those results.
 
 ### Try it by hand
 
@@ -606,78 +511,44 @@ azd ai agent invoke supervisor-agent --protocol responses --new-conversation `
   "Use an A2A hop to ask a research agent for one public-cloud revenue seasonality factor, then ask an analysis agent over A2A to quantify 4% of 50000."
 ```
 
-All four were run against supervisor version 5. What the hop logs showed:
-1. Hosted research and analysis each record an A2A `-32099` refusal followed by a
-   completed Responses fallback.
-2. The probe records an A2A `-32005` rejection of the file part and a Responses leg that
-   received both files.
-3. The listing answer needs no hop.
-4. The explicit A2A request completes Tasks on both prompt front-ends.
-
-An earlier run read the bare phrase "cloud seasonality" as weather, so the examples say
-"public-cloud revenue seasonality". Inspect the hop log, not just the prose: successful
-Responses hops must be `completed`, and A2A hops must include successful Task results.
+On v5 these produced, respectively: hosted A2A refusal followed by Responses fallback;
+a real multipart probe; a catalog listing; and two completed prompt-agent A2A Tasks.
+Both arithmetic examples returned **2,000**. Inspect the hop log, not just the prose.
+Later auto calls may skip A2A after a cached refusal, and model-selected peers/order can vary.
 
 ---
 
 ## 7. Gotchas
 
-Each of these cost real debugging time.
+Observed issues and checks to make before diagnosing a new failure:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `azd deploy` → `[CodeError] … Please review your uv.lock`, naming a transitive package | A **private registry or wheel/sdist URL** is unreachable by the Foundry builder; rewriting only `registry` is insufficient | `./scripts/lock-agents.ps1` normalizes the registry and resolves each non-public artifact to public PyPI metadata by exact SHA256. Missing matches fail explicitly. All three locks resolved 108 packages; hosted deployment succeeded after this fix. |
+| `azd deploy` → `[CodeError] … Please review your uv.lock`, naming a transitive package | A **private registry or wheel/sdist URL** is unreachable by the Foundry builder; rewriting only `registry` is insufficient | `./scripts/lock-agents.ps1` normalizes the registry and resolves each non-public artifact to public PyPI metadata by exact SHA256. Missing matches fail explicitly. Hosted deployment succeeded after this fix. |
 | Same error after normalization | The package name alone does not identify the root cause | Run `lock-agents.ps1 -Check`, inspect build diagnostics and network access. Do not assume it is intermittent; these scripts contain no deployment retry loop. |
-| Same error on *every* attempt after editing `.azdignore` | Extra `.azdignore` patterns break the code package | Keep `.azdignore` to `.env.example`. Adding `.venv/`, `__pycache__/`, `*.pyc` failed 5/5 across two agents; reverting fixed it first try. |
+| Code packaging failed after `.azdignore` changes | The tested additions `.venv/`, `__pycache__/`, `*.pyc` broke that deployment workflow | Keep the working `.env.example`-only file unless packaging and deployment are revalidated; this is not a claim that every extra pattern always fails. |
 | Evidence block missing from a reply | The host streams, so post-hoc mutation never surfaces | Wrap with `with_received_parts_evidence` / `with_hop_log_evidence` (`flat_map` on the terminal update) |
 | Supervisor "loses" an attachment | Host flattened a `text/*` file into text | Handled by `_unflatten_file`; keep it in any new forwarding path |
 | `bad_request: Hosted agents can only be called through the agent endpoint` | Used project-level `/responses` with `agent_reference` | Use the per-agent endpoint |
 | `409 conflict` deleting a prompt front-end | Live or idle-but-unexpired sessions | Only if session destruction is intended, use `deploy_a2a_frontends.py --delete --force` |
-| Agent can't reach a peer (401/403) | New managed identity after rename/recreate | Re-run `deploy-infra.ps1 -AgentPrincipalIds …` |
-| Hop log shows a `discovery` error and no peers | The supervisor identity cannot list project agents or read cards | Same fix: Foundry User on the project covers listing and cards; the supervisor reports the failure instead of guessing peers |
-| Supervisor reply is `failed` with empty text | The shared `gpt-5.4-mini` deployment's token rate limit (`capacity: 10`, 10K tokens per minute), hit by back-to-back multi-hop runs. The routing catalog adds ~700 tokens per supervisor model call | Pace runs about a minute apart, or raise `modelDeployment.capacity` in `infra/main.bicep` and re-run `deploy-infra.ps1` (an infrastructure change that needs quota) |
-| A newly created agent starts receiving sub-tasks or attachments | Intended card-based discovery: every agent with a card is a routing target, and `file` / `excel` skill tags make it eligible for attachments | Keep project membership trusted; leave `file` / `excel` tags off cards that must not receive caller data |
+| Agent can't reach a peer (401/403) | Incorrect credential, scope or role; a rename can create a new identity | Inspect the actual error and principal. If roles are missing, supply the current identities to `deploy-infra.ps1`. |
+| Discovery fails or a peer is missing | Listing errors are recorded in the hop log; individual card errors only log a warning and omit that peer | Check logs, endpoint and permissions. Do not assume the agent was deleted or A2A disabled. |
+| Failed reply with a token-rate-limit error in logs | All five agents share one model deployment limited to **10,000 tokens and 10 requests per minute** (`capacity: 10`), and one multi-hop turn makes several model calls | Pace runs about a minute apart, or raise `modelDeployment.capacity` in `infra/main.bicep` and re-run `deploy-infra.ps1` (needs quota; costs more). An empty reply alone does not identify this cause. |
+| A new card changes routing | All readable peer cards are eligible; `file`/`excel` tags allow upload forwarding when selected | Restrict who can publish cards. Tags are not a security boundary. |
 
-The active azd environment is now `project-a2a-poc-dev`. The old `research-agent-dev`
+The recorded azd environment was `project-a2a-poc-dev`. The old `research-agent-dev`
 environment and old `aif-*` / `log-*` / `appi-*` resources were deliberately preserved.
 They may still incur charges; renaming is not migration or cleanup.
 
 ---
 
-## 8. Sprint 2 backlog
+## 8. Tear down
 
-The second half of the whiteboard. Sprint 1 deliberately left the hooks in place.
-
-| Goal | Where it plugs in | What Sprint 1 already gives you |
-|---|---|---|
-| **Long-running work** | `analysis-agent` | A2A is already an async Task model; `a2a_client.py` already polls `tasks/get` with timeout/backoff |
-| **Code Interpreter / general code execution** | `analysis-agent` | Sprint 1 has bounded, explicit Excel tools only. Sandbox execution, generated charts/files and isolation need separate implementation and verification. |
-| **Large files** (3K rows × 300 cols, ~75 MB) | both specialists | Inline base64 will not scale — move to `input_file` + `file_url`/`file_id`. `file_part_uri` and the `file_url` branch are already written |
-| **State save / restore** | all three | `agent_framework_foundry_hosting` ships `FoundryCheckpointStore` and `FoundryAgentSessionStore` |
-| **Conversation isolation** (engagement ID + agent MI) | supervisor | Platform injects `x-agent-foundry-call-id` / `x-agent-user-id`; `responses_client.py` has the forwarding list |
-| **Scale** — max concurrency, SKU, memory ceiling, cold start (~10 s target) | infra | `container.resources` in `azure.yaml`; tiers `0.25/0.5Gi`, `1/2Gi`, `2/4Gi` |
-| **Cross-Foundry calls / BCDR, geo constraints** (AME/EMEA/APAC) | infra | Single region today; `remote-a2a` connections are the cross-project path |
-| **Routing trust** — which discovered agents may receive work or data | supervisor | Card-based discovery and tag-based attachment eligibility are in place; add an allow-list, owner/tag trust or a registry before admitting untrusted agents to the project |
-
-**Open questions for the Foundry product team**
-
-1. When will hosted agents accept **inbound** A2A? (§5.2)
-2. Will the A2A gate ever carry `DataPart` / `FilePart`? (§5.1)
-3. Is the `text/*` → text flattening (§5.3) intentional, and can it be opted out of?
-4. Can remote-build diagnostics identify an unreachable artifact URL instead of only a package name? (§7)
-
----
-
-## 9. Tear down
-
-**Destructive and not executed during this verification.** Deleting this resource group
-also deletes the preserved old deployment and any unrelated resources in it. Review the
-group contents and obtain approval before running these commands. Purge prevents recovery.
-Use the same explicit subscription selected in §6.
+Deleting this resource group also deletes the preserved old deployment and any unrelated resources in it. 
 
 ```powershell
 & $python .\scripts\deploy_a2a_frontends.py --delete
 # If sessions block deletion, add --force only to intentionally delete those sessions.
 az group delete -n rg-foundry-hostedagents --subscription $subscriptionId --yes
-az cognitiveservices account purge -g rg-foundry-hostedagents -l swedencentral -n <account-name> --subscription $subscriptionId
+az cognitiveservices account purge -g rg-foundry-hostedagents -l swedencentral -n '<account-name>' --subscription $subscriptionId
 ```
